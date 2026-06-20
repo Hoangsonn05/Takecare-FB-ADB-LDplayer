@@ -4,7 +4,7 @@ from pathlib import Path
 from queue import Empty, Queue
 import time
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -136,6 +137,7 @@ class MainWindow(QMainWindow):
 
         button_row = QHBoxLayout()
         self.scan_btn = QPushButton("Scan")
+        self.clear_btn = QPushButton("Xóa tất cả")
         self.connect_btn = QPushButton("Check ADB")
         self.start_btn = QPushButton("Start Selected")
         self.pause_btn = QPushButton("Pause")
@@ -143,6 +145,7 @@ class MainWindow(QMainWindow):
         self.stop_btn = QPushButton("Stop")
         for btn in [
             self.scan_btn,
+            self.clear_btn,
             self.connect_btn,
             self.start_btn,
             self.pause_btn,
@@ -153,6 +156,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(button_row)
 
         self.scan_btn.clicked.connect(self.scan_devices)
+        self.clear_btn.clicked.connect(self.clear_all_devices)
         self.connect_btn.clicked.connect(self.check_selected_adb)
         self.start_btn.clicked.connect(self.start_selected)
         self.pause_btn.clicked.connect(lambda: self.scheduler.pause(self.selected_indices()))
@@ -175,6 +179,9 @@ class MainWindow(QMainWindow):
             "Action",
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(self.COL_LAST, QHeaderView.Stretch)
         layout.addWidget(self.table, stretch=3)
@@ -417,6 +424,49 @@ class MainWindow(QMainWindow):
                 if item:
                     indices.append(int(item.text()))
         return indices
+
+    def show_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        delete_selected_action = menu.addAction("Xóa các dòng đã chọn")
+        delete_all_action = menu.addAction("Xóa tất cả")
+        
+        action = menu.exec(self.table.mapToGlobal(pos))
+        if action == delete_selected_action:
+            self.delete_selected_devices()
+        elif action == delete_all_action:
+            self.clear_all_devices()
+
+    def delete_selected_devices(self) -> None:
+        selected_ranges = self.table.selectedRanges()
+        rows_to_delete = set()
+        for r in selected_ranges:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                rows_to_delete.add(row)
+        
+        if not rows_to_delete:
+            return
+            
+        for row in sorted(rows_to_delete, reverse=True):
+            self.table.removeRow(row)
+            
+        self._rebuild_row_by_index()
+        self._append_log(f"Đã xóa {len(rows_to_delete)} dòng được chọn khỏi danh sách")
+
+    def clear_all_devices(self) -> None:
+        self.table.setRowCount(0)
+        self.row_by_index.clear()
+        self._append_log("Đã xóa toàn bộ danh sách thiết bị")
+
+    def _rebuild_row_by_index(self) -> None:
+        self.row_by_index.clear()
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.COL_INDEX)
+            if item:
+                try:
+                    idx = int(item.text())
+                    self.row_by_index[idx] = row
+                except ValueError:
+                    pass
 
     def check_selected_adb(self) -> None:
         self._apply_ui_to_settings()
