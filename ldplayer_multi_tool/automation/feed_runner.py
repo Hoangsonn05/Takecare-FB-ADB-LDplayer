@@ -76,15 +76,6 @@ class FeedRunner:
             )
         )
 
-    def emit_stats(self) -> None:
-        self.emit("stats", "", status=self.stats.status)
-
-    def log_action_debug(self, message: str) -> None:
-        if getattr(self.config, "verbose_action_log", False):
-            self.emit("action", message, status="RUNNING")
-        else:
-            self.emit_stats()
-
     def _sleep_interruptible(self, seconds: float) -> None:
         end = time.time() + seconds
         while time.time() < end and not self.stop_event.is_set():
@@ -105,13 +96,35 @@ class FeedRunner:
             return False
         return True
 
+    def log_action_debug(self, message: str) -> None:
+        """Chỉ log khi verbose_action_log=True, không spam panel mặc định."""
+        if getattr(self.config, "verbose_action_log", False):
+            self.emit("action", message, status="RUNNING")
+
     def _perform_swipe(self, command: SwipeCommand, delay_override: float | None = None) -> bool:
         result = self.device.swipe(command.x1, command.y1, command.x2, command.y2, command.duration_ms)
         msg = f"{command.label}: ({command.x1},{command.y1}) -> ({command.x2},{command.y2}) | {command.duration_ms}ms"
         if not result.ok:
             return self._handle_result(False, f"Swipe failed: {msg}; {result.brief()}")
         self.stats.swipe_count += 1
+        # Không log từng swipe vào panel — chỉ cập nhật counter và debug nếu verbose
         self.log_action_debug(msg)
+        # Emit event tối giản để cập nhật counter trên bảng mà không spam log
+        self.emit_cb(
+            AutomationEvent(
+                index=self.index,
+                type="counter",
+                level="DEBUG",
+                status=self.stats.status,
+                message="",
+                runtime_sec=self.stats.runtime_sec,
+                posts_processed=self.stats.posts_processed,
+                swipe_count=self.stats.swipe_count,
+                reaction_count=self.stats.reaction_count,
+                screenshot_count=self.stats.screenshot_count,
+                error_count=self.stats.error_count,
+            )
+        )
         self._sleep_interruptible(command.delay_sec if delay_override is None else delay_override)
         return True
 
@@ -359,10 +372,24 @@ class FeedRunner:
                 break
 
             self.stats.posts_processed += 1
-            if getattr(self.config, "verbose_action_log", False):
-                self.emit("post", f"Post started: {self.stats.posts_processed}", status="RUNNING")
-            else:
-                self.emit_stats()
+            # Không log từng post vào panel — chỉ debug nếu verbose
+            self.log_action_debug(f"Post started: {self.stats.posts_processed}")
+            # Emit counter-only event để cập nhật cột Posts
+            self.emit_cb(
+                AutomationEvent(
+                    index=self.index,
+                    type="counter",
+                    level="DEBUG",
+                    status=self.stats.status,
+                    message="",
+                    runtime_sec=self.stats.runtime_sec,
+                    posts_processed=self.stats.posts_processed,
+                    swipe_count=self.stats.swipe_count,
+                    reaction_count=self.stats.reaction_count,
+                    screenshot_count=self.stats.screenshot_count,
+                    error_count=self.stats.error_count,
+                )
+            )
             swipes_needed = self.choose_swipes_needed()
             self.maybe_react_to_current_post()
 

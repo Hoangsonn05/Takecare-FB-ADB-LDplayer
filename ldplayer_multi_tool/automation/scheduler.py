@@ -50,13 +50,10 @@ class AutomationScheduler:
         return LDConsoleManager(self.settings.ld_base, self.settings.adb_port_base).list_instances()
 
     def start(self, indices: Iterable[int], runtime_config: RuntimeConfig) -> None:
-        self.start_indices(list(indices), runtime_config)
-
-    def start_indices(self, indices: list[int], config: RuntimeConfig) -> None:
         unique = [int(i) for i in dict.fromkeys(indices)]
         if not unique:
             return
-        config_snapshot = copy.deepcopy(config)
+        config_snapshot = copy.deepcopy(runtime_config)
         with self.lock:
             if self.run_id is None:
                 self.run_id = self.db.begin_run(config_snapshot.name, len(unique))
@@ -72,14 +69,6 @@ class AutomationScheduler:
             return
         thread = threading.Thread(target=self._start_staggered, args=(to_start, config_snapshot), daemon=True)
         thread.start()
-
-    def start_one(self, index: int, config: RuntimeConfig) -> bool:
-        index = int(index)
-        if self.is_running(index):
-            self._emit_scheduler(f"LD-{index} already running")
-            return False
-        self.start_indices([index], config)
-        return True
 
     def _emit_scheduler(self, message: str) -> None:
         self.event_queue.put(AutomationEvent(index=-1, type="scheduler", status="SCHEDULER", message=message))
@@ -130,36 +119,64 @@ class AutomationScheduler:
 
     def stop(self, indices: Iterable[int]) -> None:
         for index in indices:
-            self.stop_one(int(index))
+            job = self.jobs.get(int(index))
+            if job:
+                job.stop_event.set()
+                self.emit(AutomationEvent(index=int(index), type="status", status="STOPPING", message="Stop requested"))
+            else:
+                with self.lock:
+                    if int(index) in self.pending_indices:
+                        self.pending_indices.discard(int(index))
+                        self.pending_starts = max(0, self.pending_starts - 1)
+                        self._emit_scheduler(f"[Scheduler] Canceled pending LD-{int(index)}")
 
-    def stop_one(self, index: int) -> bool:
+    def stop_all(self) -> None:
+        self.stop(list(self.jobs.keys()))
+
+    def start_indices(self, indices: list[int], config: RuntimeConfig) -> None:
+        """Alias ro rang cho start(). Dung boi GUI Start Selected."""
+        self.start(indices, config)
+
+    def start_one(self, index: int, config: RuntimeConfig) -> None:
+        """Start duy nhat 1 worker cho index. Khong tao trung neu dang chay."""
+        index = int(index)
+        with self.lock:
+            existing = self.jobs.get(index)
+            if existing and not existing.future.done():
+                self.event_queue.put(AutomationEvent(
+                    index=index, type="scheduler", status="SCHEDULER",
+                    message=f"LD-{index} already running"
+                ))
+                return
+        self.start([index], config)
+
+    def stop_one(self, index: int) -> None:
+        """Stop duy nhat 1 worker. Khong spam neu chua chay."""
         index = int(index)
         job = self.jobs.get(index)
         if job and not job.future.done():
             job.stop_event.set()
             self.emit(AutomationEvent(index=index, type="status", status="STOPPING", message="Stop requested"))
-            return True
-        with self.lock:
-            if index in self.pending_indices:
-                self.pending_indices.discard(index)
-                self.pending_starts = max(0, self.pending_starts - 1)
-                self._emit_scheduler(f"[Scheduler] Canceled pending LD-{index}")
-                return True
-        self._emit_scheduler(f"LD-{index} is not running")
-        return False
-
-    def stop_all(self) -> None:
-        with self.lock:
-            indices = sorted(set(self.jobs.keys()) | set(self.pending_indices))
-        self.stop(indices)
+        else:
+            with self.lock:
+                if index in self.pending_indices:
+                    self.pending_indices.discard(index)
+                    self.pending_starts = max(0, self.pending_starts - 1)
+                    self._emit_scheduler(f"[Scheduler] Canceled pending LD-{index}")
+                else:
+                    self.event_queue.put(AutomationEvent(
+                        index=index, type="scheduler", status="SCHEDULER",
+                        message=f"LD-{index} is not running"
+                    ))
 
     def is_running(self, index: int) -> bool:
+        """Kiem tra worker cua index co dang chay hay khong."""
         index = int(index)
+        job = self.jobs.get(index)
+        if job and not job.future.done():
+            return True
         with self.lock:
-            if index in self.pending_indices:
-                return True
-            job = self.jobs.get(index)
-            return bool(job and not job.future.done())
+            return index in self.pending_indices
 
     def active_indices(self) -> list[int]:
         with self.lock:

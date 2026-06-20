@@ -43,13 +43,11 @@ class MainWindow(QMainWindow):
     COL_ADB = 4
     COL_STATUS = 5
     COL_RUNTIME = 6
-    COL_POSTS = 7
-    COL_SWIPES = 8
-    COL_REACTIONS = 9
-    COL_SCREENSHOTS = 10
-    COL_ERRORS = 11
-    COL_ACTION = 12
-    COL_LAST = 13
+    COL_REACTIONS = 7
+    COL_SCREENSHOTS = 8
+    COL_ERRORS = 9
+    COL_LAST = 10
+    COL_ACTION = 11
 
     def __init__(self, config_path: Path) -> None:
         super().__init__()
@@ -139,8 +137,6 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.scan_btn = QPushButton("Scan")
         self.connect_btn = QPushButton("Check ADB")
-        self.launch_btn = QPushButton("Launch")
-        self.open_app_btn = QPushButton("Open Facebook")
         self.start_btn = QPushButton("Start Selected")
         self.pause_btn = QPushButton("Pause")
         self.resume_btn = QPushButton("Resume")
@@ -148,8 +144,6 @@ class MainWindow(QMainWindow):
         for btn in [
             self.scan_btn,
             self.connect_btn,
-            self.launch_btn,
-            self.open_app_btn,
             self.start_btn,
             self.pause_btn,
             self.resume_btn,
@@ -160,14 +154,12 @@ class MainWindow(QMainWindow):
 
         self.scan_btn.clicked.connect(self.scan_devices)
         self.connect_btn.clicked.connect(self.check_selected_adb)
-        self.launch_btn.clicked.connect(self.launch_selected)
-        self.open_app_btn.clicked.connect(self.open_app_selected)
         self.start_btn.clicked.connect(self.start_selected)
         self.pause_btn.clicked.connect(lambda: self.scheduler.pause(self.selected_indices()))
         self.resume_btn.clicked.connect(lambda: self.scheduler.resume(self.selected_indices()))
-        self.stop_btn.clicked.connect(self.scheduler.stop_all)
+        self.stop_btn.clicked.connect(lambda: self.scheduler.stop_all())
 
-        self.table = QTableWidget(0, 14)
+        self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels([
             "Use",
             "Index",
@@ -176,13 +168,11 @@ class MainWindow(QMainWindow):
             "ADB State",
             "Status",
             "Runtime",
-            "Posts",
-            "Swipes",
             "Reactions",
             "Screenshots",
             "Errors",
-            "Action",
             "Last message",
+            "Action",
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -268,12 +258,46 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, col, item)
         item.setText(text)
 
+    def _make_action_widget(self, index: int) -> QWidget:
+        """Tao widget chua nut Start/Stop cho 1 dong LD."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(2, 1, 2, 1)
+        layout.setSpacing(3)
+        start_btn = QPushButton("Start")
+        stop_btn = QPushButton("Stop")
+        start_btn.setFixedWidth(48)
+        stop_btn.setFixedWidth(48)
+        start_btn.clicked.connect(lambda checked=False, i=index: self._row_start(i))
+        stop_btn.clicked.connect(lambda checked=False, i=index: self._row_stop(i))
+        layout.addWidget(start_btn)
+        layout.addWidget(stop_btn)
+        return container
+
+    def _row_start(self, index: int) -> None:
+        """Start rieng 1 LD tu nut tren dong."""
+        try:
+            self._apply_ui_to_settings()
+            cfg = self._runtime_config_from_ui()
+            self.scheduler.start_one(index, cfg)
+        except Exception as exc:
+            self._append_log(f"[LD-{index}] Start error: {exc}")
+
+    def _row_stop(self, index: int) -> None:
+        """Stop rieng 1 LD tu nut tren dong."""
+        self.scheduler.stop_one(index)
+
     def _add_or_update_device(self, index: int, name: str, serial: str, adb_state: str = "unknown", initial_status: str = "IDLE", last: str = "", checked: bool = True) -> None:
         if index in self.row_by_index:
             row = self.row_by_index[index]
             cb = self.table.cellWidget(row, self.COL_SELECT)
             if isinstance(cb, QCheckBox):
                 cb.setChecked(checked)
+            # Cap nhat ten neu moi hon fallback
+            cur_name_item = self.table.item(row, self.COL_NAME)
+            cur_name = cur_name_item.text() if cur_name_item else ""
+            if name and name != f"LD-{index}" and (not cur_name or cur_name == f"LD-{index}"):
+                self._set_cell(row, self.COL_NAME, name)
         else:
             row = self.table.rowCount()
             self.table.insertRow(row)
@@ -282,32 +306,28 @@ class MainWindow(QMainWindow):
             cb.setChecked(checked)
             cb.setStyleSheet("margin-left: 12px;")
             self.table.setCellWidget(row, self.COL_SELECT, cb)
-            self._set_action_cell(row, index)
+            self.table.setCellWidget(row, self.COL_ACTION, self._make_action_widget(index))
+            self._set_cell(row, self.COL_INDEX, str(index))
+            self._set_cell(row, self.COL_NAME, name)
+            self._set_cell(row, self.COL_SERIAL, serial)
+            self._set_cell(row, self.COL_ADB, adb_state)
+            self._set_cell(row, self.COL_STATUS, initial_status)
+            self._set_cell(row, self.COL_RUNTIME, "0s")
+            self._set_cell(row, self.COL_REACTIONS, "0")
+            self._set_cell(row, self.COL_SCREENSHOTS, "0")
+            self._set_cell(row, self.COL_ERRORS, "0")
+            self._set_cell(row, self.COL_LAST, last)
+            return
+        # Update cac cell khac cho row da ton tai (tru ten da xu ly o tren)
         self._set_cell(row, self.COL_INDEX, str(index))
-        self._set_cell(row, self.COL_NAME, name)
         self._set_cell(row, self.COL_SERIAL, serial)
         self._set_cell(row, self.COL_ADB, adb_state)
         self._set_cell(row, self.COL_STATUS, initial_status)
         self._set_cell(row, self.COL_RUNTIME, "0s")
-        self._set_cell(row, self.COL_POSTS, "0")
-        self._set_cell(row, self.COL_SWIPES, "0")
         self._set_cell(row, self.COL_REACTIONS, "0")
         self._set_cell(row, self.COL_SCREENSHOTS, "0")
         self._set_cell(row, self.COL_ERRORS, "0")
         self._set_cell(row, self.COL_LAST, last)
-
-    def _set_action_cell(self, row: int, index: int) -> None:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        start_btn = QPushButton("Start")
-        stop_btn = QPushButton("Stop")
-        start_btn.clicked.connect(lambda _checked=False, idx=index: self.start_one_index(idx))
-        stop_btn.clicked.connect(lambda _checked=False, idx=index: self.stop_one_index(idx))
-        layout.addWidget(start_btn)
-        layout.addWidget(stop_btn)
-        self.table.setCellWidget(row, self.COL_ACTION, widget)
 
     @staticmethod
     def _parse_indices(text: str) -> list[int]:
@@ -450,17 +470,6 @@ class MainWindow(QMainWindow):
             self._append_log(f"Start error: {exc}")
             QMessageBox.critical(self, "Start error", str(exc))
 
-    def start_one_index(self, index: int) -> None:
-        try:
-            self._apply_ui_to_settings()
-            self.scheduler.start_one(index, self.settings.runtime_config)
-        except Exception as exc:
-            self._append_log(f"Start LD-{index} error: {exc}")
-            QMessageBox.critical(self, "Start error", str(exc))
-
-    def stop_one_index(self, index: int) -> None:
-        self.scheduler.stop_one(index)
-
     def _drain_events(self) -> None:
         try:
             while True:
@@ -470,26 +479,47 @@ class MainWindow(QMainWindow):
             pass
         self.scheduler.finalize_finished_run_if_any()
 
+    # Cac event type/status khong can log vao panel
+    _SILENT_TYPES = {"counter"}
+    # Cac status quan trong can cap nhat Last message
+    _IMPORTANT_STATUSES = {
+        "STARTING", "CHECKING_PATHS", "CONNECTING_ADB", "LAUNCHING",
+        "WAITING_BOOT", "WAITING_FACEBOOK", "OPENING_APP", "RUNNING",
+        "PAUSED", "STOPPING", "STOPPED", "DONE", "ERROR",
+    }
+
     def _render_event(self, event: AutomationEvent) -> None:
         if event.index < 0:
-            self._append_log(event.message)
+            # Scheduler message
+            if event.message:
+                self._append_log(event.message)
             return
         row = self.row_by_index.get(event.index)
         if row is None:
             serial = LDConsoleManager(self.settings.ld_base, self.settings.adb_port_base).serial_for_index(event.index)
             self._add_or_update_device(event.index, f"LD-{event.index}", serial)
             row = self.row_by_index[event.index]
+        # Luon cap nhat counters (Posts/Swipes khong hien thi tren bang nhung van dem noi bo)
         if event.status:
             self._set_cell(row, self.COL_STATUS, event.status)
         self._set_cell(row, self.COL_RUNTIME, f"{int(event.runtime_sec)}s")
-        self._set_cell(row, self.COL_POSTS, str(event.posts_processed))
-        self._set_cell(row, self.COL_SWIPES, str(event.swipe_count))
         self._set_cell(row, self.COL_REACTIONS, str(event.reaction_count))
         self._set_cell(row, self.COL_SCREENSHOTS, str(event.screenshot_count))
         self._set_cell(row, self.COL_ERRORS, str(event.error_count))
-        if event.type == "stats":
+        # Khong spam log voi event counter/silent
+        is_silent = event.type in self._SILENT_TYPES or not event.message
+        if is_silent:
             return
-        self._set_cell(row, self.COL_LAST, event.message)
+        # Cap nhat Last message chi cho cac moc quan trong
+        is_important = (event.status in self._IMPORTANT_STATUSES
+                        or event.type in {"error", "reaction", "screenshot", "status"}
+                        or event.level in {"ERROR", "WARN"})
+        if is_important:
+            self._set_cell(row, self.COL_LAST, event.message)
+        # Ghi log panel: loc bot log swipe/action neu khong phai verbose
+        verbose = getattr(self.settings.runtime_config, "verbose_action_log", False)
+        if event.type == "action" and not verbose:
+            return
         self._append_log(f"[{time.strftime('%H:%M:%S')}] [LD-{event.index}] [{event.level}] [{event.status}] {event.message}")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
