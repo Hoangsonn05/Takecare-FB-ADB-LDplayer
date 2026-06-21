@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -133,9 +134,40 @@ class MainWindow(QMainWindow):
         self.view_delay_max_spin.setSingleStep(0.5)
         self.view_delay_max_spin.setDecimals(1)
 
+        self.reel_delay_min_spin = QDoubleSpinBox()
+        self.reel_delay_min_spin.setRange(0.0, 300.0)
+        self.reel_delay_min_spin.setSingleStep(0.5)
+        self.reel_delay_min_spin.setDecimals(1)
+
+        self.reel_delay_max_spin = QDoubleSpinBox()
+        self.reel_delay_max_spin.setRange(0.0, 300.0)
+        self.reel_delay_max_spin.setSingleStep(0.5)
+        self.reel_delay_max_spin.setDecimals(1)
+
         # Ti le cuon nguoc
         self.reverse_scroll_percent_spin = QSpinBox()
         self.reverse_scroll_percent_spin.setRange(0, 100)
+
+        # Kich ban chay: Newfeed / Reel
+        self.run_newfeed_check = QCheckBox("Luot Newfeed")
+        self.run_newfeed_check.setChecked(True)
+        self.run_reel_check = QCheckBox("Luot Reel")
+        self.run_reel_check.setChecked(False)
+
+        self.script_order_combo = QComboBox()
+        self.script_order_combo.addItem("Newfeed -> Reel", "newfeed_then_reel")
+        self.script_order_combo.addItem("Reel -> Newfeed", "reel_then_newfeed")
+        self.script_order_combo.addItem("Random (moi luong tu chon)", "random")
+
+        self.reel_minutes_spin = QSpinBox()
+        self.reel_minutes_spin.setRange(0, 1440)
+        self.reel_minutes_spin.setSpecialValueText("Dung chung")
+
+        # Cam xuc Reel
+        self.reel_reaction_enabled_check = QCheckBox("Bat cam xuc Reel")
+        self.reel_reaction_enabled_check.setChecked(False)
+        self.reel_reaction_probability_spin = QSpinBox()
+        self.reel_reaction_probability_spin.setRange(0, 100)
 
         run_form.addWidget(QLabel("So post"), 0, 0)
         run_form.addWidget(self.max_posts_spin, 0, 1)
@@ -151,10 +183,23 @@ class MainWindow(QMainWindow):
         run_form.addWidget(self.view_delay_max_spin, 1, 5)
         run_form.addWidget(QLabel("Ti le cuon nguoc (%)"), 0, 6)
         run_form.addWidget(self.reverse_scroll_percent_spin, 0, 7)
-        run_form.addWidget(self.reaction_enabled_check, 2, 0)
+        run_form.addWidget(self.run_newfeed_check, 2, 0)
+        run_form.addWidget(self.run_reel_check, 2, 1)
+        run_form.addWidget(QLabel("Thu tu kich ban:"), 2, 2)
+        run_form.addWidget(self.script_order_combo, 2, 3)
+        run_form.addWidget(QLabel("Phut Reel (0=chung)"), 2, 4)
+        run_form.addWidget(self.reel_minutes_spin, 2, 5)
+        run_form.addWidget(self.reel_reaction_enabled_check, 2, 6)
+        run_form.addWidget(QLabel("Ti le cam xuc Reel (%)"), 2, 7)
+        run_form.addWidget(self.reel_reaction_probability_spin, 2, 8)
+        run_form.addWidget(self.reaction_enabled_check, 3, 0)
         for col, reaction in enumerate(ALLOWED_REACTIONS, start=1):
-            run_form.addWidget(self.reaction_checks[reaction], 2, col)
-        run_form.addWidget(self.save_config_btn, 3, 7)
+            run_form.addWidget(self.reaction_checks[reaction], 3, col)
+        run_form.addWidget(QLabel("Xem Reel min (s)"), 4, 0)
+        run_form.addWidget(self.reel_delay_min_spin, 4, 1)
+        run_form.addWidget(QLabel("Xem Reel max (s)"), 4, 2)
+        run_form.addWidget(self.reel_delay_max_spin, 4, 3)
+        run_form.addWidget(self.save_config_btn, 4, 8)
         layout.addWidget(run_box)
 
         button_row = QHBoxLayout()
@@ -224,7 +269,17 @@ class MainWindow(QMainWindow):
         self.reaction_enabled_check.setChecked(cfg.reaction_enabled)
         self.view_delay_min_spin.setValue(cfg.delay_min_sec)
         self.view_delay_max_spin.setValue(cfg.delay_max_sec)
+        self.reel_delay_min_spin.setValue(cfg.reel_delay_min_sec)
+        self.reel_delay_max_spin.setValue(cfg.reel_delay_max_sec)
         self.reverse_scroll_percent_spin.setValue(cfg.reverse_scroll_percent)
+        self.run_newfeed_check.setChecked(cfg.run_newfeed)
+        self.run_reel_check.setChecked(cfg.run_reel)
+        idx = self.script_order_combo.findData(cfg.script_order)
+        if idx >= 0:
+            self.script_order_combo.setCurrentIndex(idx)
+        self.reel_minutes_spin.setValue(cfg.reel_run_minutes)
+        self.reel_reaction_enabled_check.setChecked(cfg.reel_reaction_enabled)
+        self.reel_reaction_probability_spin.setValue(cfg.reel_reaction_probability_percent)
         selected = set(cfg.selected_reactions)
         for reaction, checkbox in self.reaction_checks.items():
             checkbox.setChecked(reaction in selected)
@@ -261,6 +316,13 @@ class MainWindow(QMainWindow):
             raise ValueError("Select at least one reaction")
         if self.view_delay_min_spin.value() > self.view_delay_max_spin.value():
             raise ValueError("Thoi gian xem bai min phai <= max")
+        if self.reel_delay_min_spin.value() > self.reel_delay_max_spin.value():
+            raise ValueError("Xem Reel min phai <= max")
+        run_newfeed = self.run_newfeed_check.isChecked()
+        run_reel = self.run_reel_check.isChecked()
+        if not run_newfeed and not run_reel:
+            raise ValueError("Chon it nhat mot hanh dong: Luot Newfeed hoac Luot Reel")
+        script_order = self.script_order_combo.currentData() or "newfeed_then_reel"
         cfg = RuntimeConfig.from_dict({
             **base.__dict__,
             "max_posts": self.max_posts_spin.value(),
@@ -271,7 +333,15 @@ class MainWindow(QMainWindow):
             "selected_reactions": selected,
             "delay_min_sec": self.view_delay_min_spin.value(),
             "delay_max_sec": self.view_delay_max_spin.value(),
+            "reel_delay_min_sec": self.reel_delay_min_spin.value(),
+            "reel_delay_max_sec": self.reel_delay_max_spin.value(),
             "reverse_scroll_percent": self.reverse_scroll_percent_spin.value(),
+            "run_newfeed": run_newfeed,
+            "run_reel": run_reel,
+            "script_order": script_order,
+            "reel_run_minutes": self.reel_minutes_spin.value(),
+            "reel_reaction_enabled": self.reel_reaction_enabled_check.isChecked(),
+            "reel_reaction_probability_percent": self.reel_reaction_probability_spin.value(),
         })
         cfg.validate()
         return cfg

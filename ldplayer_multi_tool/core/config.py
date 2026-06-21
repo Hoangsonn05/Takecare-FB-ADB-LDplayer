@@ -35,6 +35,8 @@ class RuntimeConfig:
     template_dir: str = "resources/templates"
     confidence_like: float = 0.60
     confidence_reaction: float = 0.60
+    reel_like_template: str = "nutlikereel.png"
+    reel_like_confidence: float = 0.55
     reaction_debug: bool = True
     x_min: int = 200
     x_max: int = 340
@@ -51,6 +53,8 @@ class RuntimeConfig:
     # Delay sau moi lan cuon xuong, dung nhu thoi gian xem bai viet.
     delay_min_sec: float = 2.0
     delay_max_sec: float = 3.0
+    reel_delay_min_sec: float = 2.0
+    reel_delay_max_sec: float = 4.0
     reverse_scroll_percent: int = 25
     swipes_per_post_min: int = 1
     swipes_per_post_max: int = 2
@@ -64,6 +68,18 @@ class RuntimeConfig:
     facebook_settle_sec: int = 10
     worker_start_stagger_sec: int = 5
     verbose_action_log: bool = False
+    # --- Kich ban chay ---
+    run_newfeed: bool = True
+    run_reel: bool = False
+    script_order: str = "newfeed_then_reel"  # "newfeed_then_reel" | "reel_then_newfeed" | "random"
+    reel_run_minutes: int = 0
+    # --- Cam xuc Reel (rieng biet voi Newfeed) ---
+    reel_reaction_enabled: bool = False
+    reel_reaction_probability_percent: int = 10
+    # --- Template dieu huong (Reel/Home tab) ---
+    reel_tab_template: str = "reel_tab.png"
+    home_tab_template: str = "home_tab.png"
+    nav_template_threshold: float = 0.70
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "RuntimeConfig":
@@ -98,6 +114,12 @@ class RuntimeConfig:
             raise ValueError("delay_min_sec must be >= 0")
         if self.delay_max_sec < 0:
             raise ValueError("delay_max_sec must be >= 0")
+        if self.reel_delay_min_sec < 0:
+            raise ValueError("reel_delay_min_sec must be >= 0")
+        if self.reel_delay_max_sec < 0:
+            raise ValueError("reel_delay_max_sec must be >= 0")
+        if not 0.0 <= self.reel_like_confidence <= 1.0:
+            raise ValueError("reel_like_confidence must be 0.0..1.0")
         for low, high, name in [
             (self.x_min, self.x_max, "x"),
             (self.down_y1_min, self.down_y1_max, "down_y1"),
@@ -106,6 +128,7 @@ class RuntimeConfig:
             (self.up_y2_min, self.up_y2_max, "up_y2"),
             (self.duration_min_ms, self.duration_max_ms, "duration"),
             (self.delay_min_sec, self.delay_max_sec, "delay"),
+            (self.reel_delay_min_sec, self.reel_delay_max_sec, "reel_delay"),
         ]:
             if low > high:
                 raise ValueError(f"{name}_min must be <= {name}_max")
@@ -133,6 +156,46 @@ class RuntimeConfig:
                 path = template_dir / REACTION_TEMPLATE_FILES[reaction]
                 if not path.exists():
                     raise ValueError(f"Missing reaction template for {reaction}: {path}")
+        # --- Validate Reel fields ---
+        if self.script_order not in {"newfeed_then_reel", "reel_then_newfeed", "random"}:
+            raise ValueError("script_order must be newfeed_then_reel, reel_then_newfeed or random")
+        if not self.run_newfeed and not self.run_reel:
+            raise ValueError("At least one action must be enabled: run_newfeed or run_reel")
+        if self.reel_run_minutes < 0:
+            raise ValueError("reel_run_minutes must be >= 0")
+        if not 0.0 <= self.nav_template_threshold <= 1.0:
+            raise ValueError("nav_template_threshold must be 0.0..1.0")
+        if not 0 <= self.reel_reaction_probability_percent <= 100:
+            raise ValueError("reel_reaction_probability_percent must be 0..100")
+        if self.run_reel and self.reel_reaction_enabled:
+            if not self.selected_reactions:
+                raise ValueError("selected_reactions must contain at least one reaction when reel_reaction_enabled=True")
+            template_dir = app_path(self.template_dir)
+            if not template_dir.exists():
+                raise ValueError(f"template_dir does not exist: {self.template_dir}")
+            reel_like_path = self._resolve_template_file(template_dir, self.reel_like_template)
+            if reel_like_path is None:
+                raise ValueError(f"Missing Reel like template: {template_dir / self.reel_like_template}")
+            for reaction in self.selected_reactions:
+                if reaction != "like":
+                    path = template_dir / REACTION_TEMPLATE_FILES[reaction]
+                    if not path.exists():
+                        raise ValueError(f"Missing reaction template for {reaction}: {path}")
+
+    @staticmethod
+    def _resolve_template_file(template_dir: Path, filename: str) -> Path | None:
+        path = template_dir / filename
+        if path.exists():
+            return path
+        stem = Path(filename).stem
+        candidates = []
+        for ext in (".png", ".jpg", ".jpeg"):
+            candidates.append(template_dir / f"{stem}{ext}")
+            candidates.append(template_dir / f"{filename}{ext}")
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
 
 
 # Backward-compatible import name for older modules or CLI calls.

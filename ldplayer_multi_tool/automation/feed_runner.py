@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from random import choice, randint, uniform
+import random as _random
 from typing import Callable, Optional
 import threading
 import time
@@ -11,9 +12,10 @@ from core.adb_device import ADBDevice
 from core.config import AppSettings, RuntimeConfig
 from core.events import AutomationEvent
 from core.ldconsole import LDConsoleManager
+from core.nav_matcher import NavMatcher
 from core.paths import app_path
 from core.template_matcher import TemplateMatcher
-from .actions import SwipeCommand, random_down_swipe, random_up_swipe
+from .actions import SwipeCommand, random_down_swipe, random_reel_down_swipe, random_up_swipe
 
 EventCallback = Callable[[AutomationEvent], None]
 
@@ -56,8 +58,13 @@ class FeedRunner:
         self.consecutive_errors = 0
         self.screenshot_dir = app_path(settings.screenshots_dir)
         self.matcher: TemplateMatcher | None = None
+        self.reel_matcher: TemplateMatcher | None = None
         self.screen_width: int | None = None
         self.screen_height: int | None = None
+        self.nav_matcher = NavMatcher(
+            self._resolve_template_dir(runtime_config.template_dir),
+            threshold=runtime_config.nav_template_threshold,
+        )
 
     def emit(self, type_: str, message: str, level: str = "INFO", status: Optional[str] = None) -> None:
         if status:
@@ -186,6 +193,18 @@ class FeedRunner:
             return path
         self._handle_result(False, "Screenshot failed")
         return None
+
+    def _capture_nav_screen(self, tag: str) -> Path | None:
+        """Chup screenshot cho dieu huong (Reel/Home tab). Khong spam log."""
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        path = self.screenshot_dir / f"nav_ld_{self.index}_{tag}_{int(time.time() * 1000)}.png"
+        ok = self.device.screenshot(path)
+        if not ok or not path.exists():
+            self.stats.error_count += 1
+            self.emit("error", f"Nav screenshot failed: {path}", level="ERROR")
+            return None
+        self.stats.screenshot_count += 1
+        return path
 
     def _capture_reaction_screen(self, tag: str) -> Path | None:
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -325,6 +344,12 @@ class FeedRunner:
                 self.config.confidence_like,
                 self.config.confidence_reaction,
             )
+        if self.config.reel_reaction_enabled:
+            self.reel_matcher = TemplateMatcher(
+                self._resolve_template_dir(self.config.template_dir),
+                self.config.reel_like_confidence,
+                self.config.confidence_reaction,
+            )
         return True
 
     def maybe_react_to_current_post(self) -> bool:
@@ -427,40 +452,192 @@ class FeedRunner:
         self.emit("reaction", f"Reaction sent: {reaction_name} at ({reaction_match.x},{reaction_match.y})", status="RUNNING")
         return True
 
-    def run(self) -> RunnerStats:
-        self.stats = RunnerStats(started_at=time.time(), status="STARTING")
-        self.emit("status", "Worker started", status="STARTING")
-        if not self.bootstrap():
-            self.emit("status", "Bootstrap failed", level="ERROR", status="ERROR")
-            return self.stats
+    def maybe_react_to_current_reel(self) -> bool:
+        """
+        Tha cam xuc cho Reel hien tai.
+        Tim Like o COT PHAI man hinh (khac Newfeed).
+        Giu nguyen co che long press va tim reaction panel.
+        """
+        if not self.config.reel_reaction_enabled:
+            return False
+        if self.stats.reaction_count >= self.config.max_reactions:
+            self._reaction_debug("reel: skipped: max reactions reached")
+            return False
+        if not self.config.selected_reactions:
+            self.emit("reaction", "Reel reaction skipped: no selected reactions", level="WARN")
+            return False
+        roll = randint(1, 100)
+        if roll > self.config.reel_reaction_probability_percent:
+            self._reaction_debug(f"reel: skipped: probability roll {roll}")
+            return False
 
+        self.emit("reaction", "Reel reaction attempt started", status="RUNNING")
+        if self.reel_matcher is None:
+            self.reel_matcher = TemplateMatcher(
+                self._resolve_template_dir(self.config.template_dir),
+                self.config.reel_like_confidence,
+                self.config.confidence_reaction,
+            )
+
+        first = self._capture_reaction_screen("reel_before")
+        if first is None:
+            return False
+        try:
+            # Dung find_reel_like_button — tim icon o cot phai (khac find_like_button Newfeed)
+            like_match, like_best, like_roi = self.reel_matcher.find_reel_like_button(
+                screenshot_path=first,
+                template_filename=self.config.reel_like_template,
+                threshold=self.config.reel_like_confidence,
+            )
+        except Exception as exc:
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reel like template error: {exc}", level="ERROR")
+            return False
+        self.emit(
+            "reaction",
+            f"Reel like best confidence={like_best:.3f} "
+            f"threshold={self.config.reel_like_confidence:.3f} "
+            f"roi={like_roi} template={self.config.reel_like_template}",
+        )
+        if like_match is None:
+            self.emit(
+                "reaction",
+                f"Reel like button not found. best={like_best:.3f}, "
+                f"threshold={self.config.reel_like_confidence:.3f}, "
+                f"roi={like_roi}, template={self.config.reel_like_template}",
+                level="WARN",
+            )
+            return False
+
+        reaction_name = choice(self.config.selected_reactions)
+        self.emit("reaction", f"Reel reaction selected: {reaction_name}")
+        if reaction_name == "like":
+            tap = self.device.tap(like_match.x, like_match.y)
+            if not tap.ok:
+                self.stats.error_count += 1
+                self.emit("reaction", f"Reel reaction tap failed: {tap.brief()}", level="ERROR")
+                return False
+            self.stats.reaction_count += 1
+            self.emit("reaction", f"Reel reaction sent: like at ({like_match.x},{like_match.y})", status="RUNNING")
+            return True
+
+        # Long press de mo panel cam xuc — giu nguyen co che nhu Newfeed
+        duration_ms = randint(1100, 1500)
+        panel_threshold = max(float(self.config.confidence_reaction), 0.75)
+        self.emit("reaction", f"Reel: opening reaction panel by long press Like for {duration_ms}ms", status="RUNNING")
+        press = self.device.long_press(like_match.x, like_match.y, duration_ms=duration_ms)
+        if not press.ok:
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reel: open reaction panel failed: {press.brief()}", level="ERROR")
+            return False
+        self._sleep_interruptible(uniform(1.0, 1.5))
+
+        second = self._capture_reaction_screen("reel_panel")
+        if second is None:
+            return False
+        try:
+            # Tim reaction trong panel — dung chung find_reaction_in_panel (panel giong nhau)
+            reaction_match, reaction_best, roi = self.reel_matcher.find_reaction_in_panel(
+                screenshot_path=second,
+                reaction_name=reaction_name,
+                like_x=like_match.x,
+                like_y=like_match.y,
+                screen_width=self.screen_width,
+                screen_height=self.screen_height,
+                threshold=panel_threshold,
+            )
+        except Exception as exc:
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reel reaction template error: {reaction_name}: {exc}", level="ERROR")
+            return False
+        self.emit(
+            "reaction",
+            f"Reel {reaction_name} panel best confidence={reaction_best:.3f}, threshold={panel_threshold:.3f}, roi={roi}",
+        )
+        if reaction_match is None:
+            self.emit(
+                "reaction",
+                f"Reel reaction icon not found in panel: {reaction_name}. best={reaction_best:.3f}, "
+                f"threshold={panel_threshold:.3f}, roi={roi}",
+                level="WARN",
+            )
+            return False
+
+        tap = self.device.tap(reaction_match.x, reaction_match.y)
+        if not tap.ok:
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reel reaction tap failed: {tap.brief()}", level="ERROR")
+            return False
+        self.stats.reaction_count += 1
+        self.emit("reaction", f"Reel reaction sent: {reaction_name} at ({reaction_match.x},{reaction_match.y})", status="RUNNING")
+        return True
+
+    def reveal_top_nav(self) -> bool:
+        """Cuon len 1 lan de thanh dieu huong Facebook hien ra."""
+        self.emit("status", "Reveal top navigation", status=self.stats.status)
+        cmd = random_up_swipe(self.config)
+        if not self._perform_swipe(cmd, delay_override=uniform(1.0, 1.5)):
+            return False
+        self._sleep_interruptible(uniform(0.8, 1.2))
+        return not self.stop_event.is_set()
+
+    def _tap_nav_icon(self, template_filename: str, tab_label: str) -> bool:
+        """reveal -> screenshot -> find template -> tap. Dung chung cho Reel va Home."""
+        if not self.reveal_top_nav():
+            return False
+        screen = self._capture_nav_screen(tab_label)
+        if screen is None:
+            return False
+        try:
+            match, best = self.nav_matcher.find_top_nav_icon(screen, template_filename)
+        except Exception as exc:
+            self._handle_result(False, f"Find {tab_label} tab failed: {exc}")
+            return False
+        self.emit("status", f"{tab_label} tab best confidence={best:.3f} threshold={self.config.nav_template_threshold:.3f}", status=self.stats.status)
+        if match is None:
+            self._handle_result(False, f"{tab_label} tab not found. best={best:.3f}, threshold={self.config.nav_template_threshold:.3f}")
+            return False
+        tap = self.device.tap(match.x, match.y)
+        if not tap.ok:
+            self._handle_result(False, f"Tap {tab_label} tab failed: {tap.brief()}")
+            return False
+        self._sleep_interruptible(uniform(2.0, 3.0))
+        return not self.stop_event.is_set()
+
+    def enter_reel_tab(self) -> bool:
+        self.emit("status", "Entering Reel tab", status="OPENING_REEL")
+        ok = self._tap_nav_icon(self.config.reel_tab_template, "Reel")
+        if ok:
+            self.emit("status", "Reel ready", status="RUNNING")
+        return ok
+
+    def enter_home_tab(self) -> bool:
+        self.emit("status", "Entering Home tab", status="OPENING_HOME")
+        ok = self._tap_nav_icon(self.config.home_tab_template, "Home")
+        if ok:
+            self.emit("status", "Home ready", status="RUNNING")
+        return ok
+
+    def run_newfeed_loop(self) -> None:
+        """Loop Newfeed goc — giu nguyen logic reaction, reverse scroll, view delay."""
         deadline = time.time() + self.config.run_minutes * 60
-        self.emit("status", "Runtime config started", status="RUNNING")
         while time.time() < deadline and not self.stop_event.is_set():
             while self.pause_event.is_set() and not self.stop_event.is_set():
                 time.sleep(0.5)
-
             if self.config.max_posts > 0 and self.stats.posts_processed >= self.config.max_posts:
                 break
-
             if self.config.stop_on_adb_offline and self.device.get_state() != "device":
                 if not self._handle_result(False, "ADB state is not device"):
                     break
                 self.device.connect()
                 self._sleep_interruptible(2)
                 continue
-
             self.stats.posts_processed += 1
-            # Khong log tung post vao panel — chi debug neu verbose
             self.log_action_debug(f"Post started: {self.stats.posts_processed}")
-            # Emit counter-only event de cap nhat cot Posts
             self.emit_cb(
                 AutomationEvent(
-                    index=self.index,
-                    type="counter",
-                    level="DEBUG",
-                    status=self.stats.status,
-                    message="",
+                    index=self.index, type="counter", level="DEBUG",
+                    status=self.stats.status, message="",
                     runtime_sec=self.stats.runtime_sec,
                     posts_processed=self.stats.posts_processed,
                     swipe_count=self.stats.swipe_count,
@@ -471,8 +648,6 @@ class FeedRunner:
             )
             swipes_needed = self.choose_swipes_needed()
             self.maybe_react_to_current_post()
-
-            # Cuon xuong bai chinh — delay_sec trong SwipeCommand la thoi gian xem bai
             swipe_ok = True
             for _ in range(swipes_needed):
                 if self.stop_event.is_set() or time.time() >= deadline:
@@ -481,19 +656,78 @@ class FeedRunner:
                 if not self._perform_swipe(self.random_swipe_down()):
                     swipe_ok = False
                     break
-
             if not swipe_ok:
                 break
-
-            # Sau cuon xuong va da sleep view delay, xac suat cuon nguoc nhe
             if not self.stop_event.is_set() and time.time() < deadline:
                 if not self.maybe_reverse_scroll():
                     break
 
+    def run_reel_loop(self) -> None:
+        """Loop Reel: swipe dai hon, co reaction rieng, khong reverse scroll."""
+        minutes = self.config.reel_run_minutes or self.config.run_minutes
+        deadline = time.time() + minutes * 60
+        self.emit("status", f"Reel loop started for {minutes} min", status="RUNNING")
+        while time.time() < deadline and not self.stop_event.is_set():
+            while self.pause_event.is_set() and not self.stop_event.is_set():
+                time.sleep(0.5)
+            if self.config.stop_on_adb_offline and self.device.get_state() != "device":
+                if not self._handle_result(False, "ADB state is not device"):
+                    break
+                self.device.connect()
+                self._sleep_interruptible(2)
+                continue
+            # Thu reaction truoc khi swipe (dung rieng find_reel_like_button)
+            self.maybe_react_to_current_reel()
+            if self.stop_event.is_set():
+                break
+            cmd = random_reel_down_swipe(self.config, self.screen_height)
+            if not self._perform_swipe(cmd):
+                break
+
+    def _emit_final_status(self) -> None:
         if self.stop_event.is_set():
             self.emit("status", "Stopped", status="STOPPED")
         elif self.stats.status == "ERROR":
             self.emit("status", "Stopped after errors", status="ERROR")
         else:
             self.emit("status", "Done", status="DONE")
+
+
+    def run(self) -> RunnerStats:
+        self.stats = RunnerStats(started_at=time.time(), status="STARTING")
+        self.emit("status", "Worker started", status="STARTING")
+        if not self.bootstrap():
+            self.emit("status", "Bootstrap failed", level="ERROR", status="ERROR")
+            return self.stats
+
+        self.emit("status", "Runtime config started", status="RUNNING")
+
+        run_nf = self.config.run_newfeed
+        run_rl = self.config.run_reel
+
+        # Giai quyet thu tu kich ban, ke ca random
+        order = self.config.script_order
+        if order == "random" and run_nf and run_rl:
+            order = _random.choice(["newfeed_then_reel", "reel_then_newfeed"])
+            self.emit("status", f"Random script order selected: {order}", status="RUNNING")
+
+        if run_nf and run_rl:
+            if order == "newfeed_then_reel":
+                self.run_newfeed_loop()
+                if not self.stop_event.is_set():
+                    if self.enter_reel_tab() and not self.stop_event.is_set():
+                        self.run_reel_loop()
+            else:  # reel_then_newfeed
+                if self.enter_reel_tab() and not self.stop_event.is_set():
+                    self.run_reel_loop()
+                if not self.stop_event.is_set():
+                    if self.enter_home_tab() and not self.stop_event.is_set():
+                        self.run_newfeed_loop()
+        elif run_rl:
+            if self.enter_reel_tab() and not self.stop_event.is_set():
+                self.run_reel_loop()
+        else:  # chi Newfeed
+            self.run_newfeed_loop()
+
+        self._emit_final_status()
         return self.stats

@@ -46,6 +46,39 @@ class TemplateMatcher:
         self._cache[name] = img
         return img
 
+    def _load_template_by_filename(self, filename: str):
+        cache_key = f"file:{filename}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        path = self.template_dir / filename
+        if not path.exists():
+            stem = Path(filename).stem
+            for ext in (".png", ".jpg", ".jpeg"):
+                for candidate in (self.template_dir / f"{stem}{ext}", self.template_dir / f"{filename}{ext}"):
+                    if candidate.exists():
+                        path = candidate
+                        break
+                if path.exists():
+                    break
+            else:
+                raise FileNotFoundError(f"Missing template: {self.template_dir / filename}")
+
+        img = imread_unicode(path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise ValueError(f"Cannot read template with Unicode-safe OpenCV loader: {path}")
+
+        self._cache[cache_key] = img
+        return img
+
+    def _prepare_reel_like_template(self, template_gray):
+        h, w = template_gray.shape[:2]
+        if h > w * 1.25:
+            return template_gray[: max(1, int(h * 0.62)), :]
+        if h > w:
+            return template_gray[: max(1, int(h * 0.70)), :]
+        return template_gray
+
     def _find(self, screenshot_path: str | Path, name: str, threshold: float) -> tuple[MatchResult | None, float]:
         screen = imread_unicode(screenshot_path, cv2.IMREAD_GRAYSCALE)
         if screen is None:
@@ -101,6 +134,51 @@ class TemplateMatcher:
         x = int(best_point[0] + best_size[0] / 2)
         y = int(y0 + best_point[1] + best_size[1] / 2)
         return MatchResult(x=x, y=y, confidence=best_score, template_name="like"), best_score
+
+    def find_reel_like_button(
+        self,
+        screenshot_path: str | Path,
+        template_filename: str = "nutlikereel.png",
+        threshold: float = 0.55,
+    ) -> tuple[MatchResult | None, float, tuple[int, int, int, int]]:
+        screen = imread_unicode(screenshot_path, cv2.IMREAD_GRAYSCALE)
+        if screen is None:
+            raise ValueError(f"Cannot read screenshot with Unicode-safe OpenCV loader: {screenshot_path}")
+
+        h, w = screen.shape[:2]
+        roi_x1 = int(w * 0.78)
+        roi_x2 = w
+        roi_y1 = int(h * 0.35)
+        roi_y2 = int(h * 0.90)
+        roi_box = (roi_x1, roi_y1, roi_x2, roi_y2)
+        roi = screen[roi_y1:roi_y2, roi_x1:roi_x2]
+        template = self._prepare_reel_like_template(self._load_template_by_filename(template_filename))
+        roi_edges = cv2.Canny(roi, 50, 150)
+
+        best_score = -1.0
+        best_loc = None
+        best_size = None
+
+        for scale in self.LIKE_SCALES:
+            resized = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            th, tw = resized.shape[:2]
+            if th >= roi.shape[0] or tw >= roi.shape[1]:
+                continue
+
+            resized_edges = cv2.Canny(resized, 50, 150)
+            result = cv2.matchTemplate(roi_edges, resized_edges, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if float(max_val) > best_score:
+                best_score = float(max_val)
+                best_loc = max_loc
+                best_size = (tw, th)
+
+        if best_loc is None or best_size is None or best_score < float(threshold):
+            return None, best_score, roi_box
+
+        x = int(roi_x1 + best_loc[0] + best_size[0] / 2)
+        y = int(roi_y1 + best_loc[1] + best_size[1] / 2)
+        return MatchResult(x=x, y=y, confidence=best_score, template_name=template_filename), best_score, roi_box
 
     def find_reaction(self, screenshot_path: str | Path, reaction_name: str) -> tuple[MatchResult | None, float]:
         return self._find(screenshot_path, reaction_name, self.confidence_reaction)
