@@ -8,19 +8,18 @@
   "database_path": "data/runs.sqlite3",
   "runtime_config": {
     "name": "runtime",
-    "run_minutes": 5,
+    "run_minutes": 1,
     "max_posts": 0,
-    "reaction_enabled": false,
-    "max_reactions": 5,
+    "reaction_enabled": true,
+    "max_reactions": 1,
     "reaction_probability_percent": 100,
     "selected_reactions": [
-      "like",
-      "love",
-      "thuongthuong"
+      "like"
     ],
     "template_dir": "resources/templates",
     "confidence_like": 0.6,
     "confidence_reaction": 0.6,
+    "reaction_debug": true,
     "x_min": 200,
     "x_max": 340,
     "down_y1_min": 700,

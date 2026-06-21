@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 import time
 
 from .command_runner import CommandRunner, CommandResult
@@ -125,38 +125,33 @@ class ADBDevice:
         return False
 
     def screenshot(self, local_path: str | Path) -> bool:
+        from core.image_io import image_is_readable
+
         local = Path(local_path)
         local.parent.mkdir(parents=True, exist_ok=True)
-        # Preferred path: stream screenshot directly to stdout.
-        result = self.runner.run(self._adb("exec-out", "screencap", "-p"), timeout=15)
-        if result.returncode == 0:
-            # CommandRunner decodes stdout, which is not suitable for binary. Run raw for this one.
-            try:
-                import subprocess
 
-                completed = subprocess.run(
-                    [str(self.adb_path), "-s", self.serial, "exec-out", "screencap", "-p"],
-                    capture_output=True,
-                    timeout=15,
-                )
-                if completed.returncode == 0 and completed.stdout:
-                    local.write_bytes(completed.stdout)
-                    return True
-            except Exception:
-                pass
-        # Fallback path: write to device and pull.
-        index = self.index
-        if index is None:
+        if local.exists():
             try:
-                port = int(self.serial.rsplit(":", 1)[1])
-                index = max(0, (port - 5555) // 2)
-            except (IndexError, ValueError):
-                index = 0
-        remote = f"/sdcard/tmp_screen_{index}.png"
-        if not self.shell("screencap", "-p", remote, timeout=12).ok:
+                local.unlink()
+            except OSError:
+                pass
+
+        remote = f"/sdcard/ld_tool_screen_{self.serial.replace(':', '_')}.png"
+        cap = self.shell("screencap", "-p", remote, timeout=15)
+        if not cap.ok:
             return False
-        pulled = self.runner.run([self.adb_path, "-s", self.serial, "pull", remote, local], timeout=15)
-        return pulled.ok and local.exists() and local.stat().st_size > 0
+
+        pulled = self.runner.run([self.adb_path, "-s", self.serial, "pull", remote, local], timeout=20)
+        if not pulled.ok:
+            return False
+
+        if not local.exists() or local.stat().st_size <= 0:
+            return False
+
+        if not image_is_readable(local):
+            return False
+
+        return True
 
     def screen_size(self) -> Optional[ScreenSize]:
         result = self.shell("wm", "size", timeout=8)

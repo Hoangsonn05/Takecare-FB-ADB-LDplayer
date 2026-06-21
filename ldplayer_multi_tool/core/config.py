@@ -10,7 +10,8 @@ from .paths import app_path
 DEFAULT_LD_BASE = r"D:\MMO\QuanlyLDPlayer\LD9Mod-32bit\LD9Mod"
 FACEBOOK_PACKAGE_NAME = "com.facebook.katana"
 
-ALLOWED_REACTIONS = ["like", "love", "thuongthuong", "haha", "wow", "sad", "angry"]
+VALID_REACTIONS = ["like", "love", "thuongthuong", "haha", "wow", "sad", "angry"]
+ALLOWED_REACTIONS = VALID_REACTIONS
 REACTION_TEMPLATE_FILES = {
     "like": "like.png",
     "love": "love.jpg",
@@ -30,10 +31,11 @@ class RuntimeConfig:
     reaction_enabled: bool = False
     max_reactions: int = 20
     reaction_probability_percent: int = 10
-    selected_reactions: List[str] = field(default_factory=lambda: ["love", "haha"])
+    selected_reactions: List[str] = field(default_factory=list)
     template_dir: str = "resources/templates"
     confidence_like: float = 0.60
     confidence_reaction: float = 0.60
+    reaction_debug: bool = True
     x_min: int = 200
     x_max: int = 340
     down_y1_min: int = 700
@@ -80,7 +82,7 @@ class RuntimeConfig:
             raise ValueError("max_reactions must be >= 0")
         if not 0 <= self.reaction_probability_percent <= 100:
             raise ValueError("reaction_probability_percent must be 0..100")
-        invalid = [name for name in self.selected_reactions if name not in ALLOWED_REACTIONS]
+        invalid = [name for name in self.selected_reactions if name not in VALID_REACTIONS]
         if invalid:
             raise ValueError(f"selected_reactions contains invalid value(s): {', '.join(invalid)}")
         if not 0 <= self.reverse_scroll_percent <= 100:
@@ -114,6 +116,8 @@ class RuntimeConfig:
             if value < 0:
                 raise ValueError(f"{name} must be >= 0")
         if self.reaction_enabled:
+            if not self.selected_reactions:
+                raise ValueError("selected_reactions must contain at least one reaction when reaction_enabled=True")
             template_dir = app_path(self.template_dir)
             if not template_dir.exists():
                 raise ValueError(f"template_dir does not exist: {self.template_dir}")

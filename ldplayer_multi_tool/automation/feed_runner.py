@@ -56,6 +56,8 @@ class FeedRunner:
         self.consecutive_errors = 0
         self.screenshot_dir = app_path(settings.screenshots_dir)
         self.matcher: TemplateMatcher | None = None
+        self.screen_width: int | None = None
+        self.screen_height: int | None = None
 
     def emit(self, type_: str, message: str, level: str = "INFO", status: Optional[str] = None) -> None:
         if status:
@@ -163,6 +165,12 @@ class FeedRunner:
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         return self.screenshot_dir / f"ld_{self.index}_{int(time.time() * 1000)}.png"
 
+    def _resolve_template_dir(self, template_dir: str) -> Path:
+        p = Path(template_dir)
+        if p.is_absolute():
+            return p
+        return Path(__file__).resolve().parents[1] / p
+
     def _capture_screenshot(self) -> Path | None:
         path = self._screenshot_path()
         if self.device.screenshot(path):
@@ -171,6 +179,35 @@ class FeedRunner:
             return path
         self._handle_result(False, "Screenshot failed")
         return None
+
+    def _capture_reaction_screen(self, tag: str) -> Path | None:
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        path = self.screenshot_dir / f"reaction_ld_{self.index}_{tag}_{int(time.time() * 1000)}.png"
+        ok = self.device.screenshot(path)
+        exists = path.exists()
+        size = path.stat().st_size if exists else 0
+        label = "Reaction panel screenshot" if tag == "panel" else "Reaction screenshot"
+
+        if ok and exists and size > 0:
+            self.stats.screenshot_count += 1
+            self.emit("screenshot", f"{label} saved: {path} ({size} bytes)", status=self.stats.status)
+            return path
+
+        self.stats.error_count += 1
+        if exists:
+            self.emit(
+                "error",
+                f"Reaction screenshot unreadable after capture: {path} ({size} bytes). "
+                "Check screenshot bytes, adb pull result, and Unicode-safe image loader.",
+                level="ERROR",
+            )
+        else:
+            self.emit("error", f"Reaction screenshot failed: {path}", level="ERROR")
+        return None
+
+    def _reaction_debug(self, message: str) -> None:
+        if getattr(self.config, "reaction_debug", True):
+            self.emit("reaction", f"Reaction debug: {message}", status=self.stats.status)
 
     def _open_facebook(self) -> bool:
         package = self.settings.package_name
@@ -265,6 +302,8 @@ class FeedRunner:
 
         size = self.device.screen_size()
         if size:
+            self.screen_width = size.width
+            self.screen_height = size.height
             self.emit("status", f"Screen size: {size.width}x{size.height}")
 
         if self.config.launch_app and self.settings.package_name:
@@ -275,7 +314,7 @@ class FeedRunner:
 
         if self.config.reaction_enabled:
             self.matcher = TemplateMatcher(
-                str(app_path(self.config.template_dir)),
+                self._resolve_template_dir(self.config.template_dir),
                 self.config.confidence_like,
                 self.config.confidence_reaction,
             )
@@ -285,64 +324,100 @@ class FeedRunner:
         if not self.config.reaction_enabled:
             return False
         if self.stats.reaction_count >= self.config.max_reactions:
+            self._reaction_debug("skipped: max reactions reached")
             return False
         if not self.config.selected_reactions:
+            self.emit("reaction", "Reaction skipped: no selected reactions", level="WARN")
             return False
-        if randint(1, 100) > self.config.reaction_probability_percent:
+        roll = randint(1, 100)
+        if roll > self.config.reaction_probability_percent:
+            self._reaction_debug(f"skipped: probability roll {roll}")
             return False
+        self.emit("reaction", "Reaction attempt started", status="RUNNING")
         if self.matcher is None:
             self.matcher = TemplateMatcher(
-                str(app_path(self.config.template_dir)),
+                self._resolve_template_dir(self.config.template_dir),
                 self.config.confidence_like,
                 self.config.confidence_reaction,
             )
 
-        first = self._capture_screenshot()
+        first = self._capture_reaction_screen("before")
         if first is None:
             return False
         try:
-            like_pos = self.matcher.find_like_button(str(first))
+            like_match, like_best = self.matcher.find_like_button(first)
         except Exception as exc:
-            self._handle_result(False, f"Find Like failed: {exc}")
+            self.stats.error_count += 1
+            self.emit("reaction", f"Like template error: {exc}", level="ERROR")
             return False
-        if like_pos is None:
-            self.emit("reaction", "Like button not found")
+        self.emit("reaction", f"Like best confidence={like_best:.3f} threshold={self.config.confidence_like:.3f}")
+        if like_match is None:
+            self.emit(
+                "reaction",
+                f"Like button not found. best={like_best:.3f}, threshold={self.config.confidence_like:.3f}",
+                level="WARN",
+            )
             return False
 
         reaction_name = choice(self.config.selected_reactions)
+        self.emit("reaction", f"Reaction selected: {reaction_name}")
         if reaction_name == "like":
-            tap = self.device.tap(like_pos[0], like_pos[1])
+            tap = self.device.tap(like_match.x, like_match.y)
             if not tap.ok:
-                self._handle_result(False, f"Tap Like failed: {tap.brief()}")
+                self.stats.error_count += 1
+                self.emit("reaction", f"Reaction tap failed: {tap.brief()}", level="ERROR")
                 return False
             self.stats.reaction_count += 1
-            self.emit("reaction", "Reacted: like", status="RUNNING")
+            self.emit("reaction", f"Reaction sent: like at ({like_match.x},{like_match.y})", status="RUNNING")
             return True
 
-        result = self.device.long_press(like_pos[0], like_pos[1], duration_ms=1000)
-        if not result.ok:
-            self._handle_result(False, f"Long press Like failed: {result.brief()}")
+        duration_ms = randint(1100, 1500)
+        panel_threshold = max(float(self.config.confidence_reaction), 0.75)
+        self.emit("reaction", f"Opening reaction panel by long press Like for {duration_ms}ms", status="RUNNING")
+        press = self.device.long_press(like_match.x, like_match.y, duration_ms=duration_ms)
+        if not press.ok:
+            self.stats.error_count += 1
+            self.emit("reaction", f"Open reaction panel failed: {press.brief()}", level="ERROR")
             return False
-        self._sleep_interruptible(randint(2000, 2500) / 1000)
+        self._sleep_interruptible(uniform(1.0, 1.5))
 
-        second = self._capture_screenshot()
+        second = self._capture_reaction_screen("panel")
         if second is None:
             return False
         try:
-            reaction_pos = self.matcher.find_reaction(str(second), reaction_name)
+            reaction_match, reaction_best, roi = self.matcher.find_reaction_in_panel(
+                screenshot_path=second,
+                reaction_name=reaction_name,
+                like_x=like_match.x,
+                like_y=like_match.y,
+                screen_width=self.screen_width,
+                screen_height=self.screen_height,
+                threshold=panel_threshold,
+            )
         except Exception as exc:
-            self._handle_result(False, f"Find reaction failed: {exc}")
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reaction template error: {reaction_name}: {exc}", level="ERROR")
             return False
-        if reaction_pos is None:
-            self.emit("reaction", f"Reaction not found: {reaction_name}")
+        self.emit(
+            "reaction",
+            f"{reaction_name} panel best confidence={reaction_best:.3f}, threshold={panel_threshold:.3f}, roi={roi}",
+        )
+        if reaction_match is None:
+            self.emit(
+                "reaction",
+                f"Reaction icon not found in panel: {reaction_name}. best={reaction_best:.3f}, "
+                f"threshold={panel_threshold:.3f}, roi={roi}",
+                level="WARN",
+            )
             return False
 
-        tap = self.device.tap(reaction_pos[0], reaction_pos[1])
+        tap = self.device.tap(reaction_match.x, reaction_match.y)
         if not tap.ok:
-            self._handle_result(False, f"Tap reaction failed: {tap.brief()}")
+            self.stats.error_count += 1
+            self.emit("reaction", f"Reaction tap failed: {tap.brief()}", level="ERROR")
             return False
         self.stats.reaction_count += 1
-        self.emit("reaction", f"Reacted: {reaction_name}", status="RUNNING")
+        self.emit("reaction", f"Reaction sent: {reaction_name} at ({reaction_match.x},{reaction_match.y})", status="RUNNING")
         return True
 
     def run(self) -> RunnerStats:
@@ -368,9 +443,6 @@ class FeedRunner:
                 self._sleep_interruptible(2)
                 continue
 
-            if not self.maybe_reverse_scroll():
-                break
-
             self.stats.posts_processed += 1
             # Không log từng post vào panel — chỉ debug nếu verbose
             self.log_action_debug(f"Post started: {self.stats.posts_processed}")
@@ -392,6 +464,9 @@ class FeedRunner:
             )
             swipes_needed = self.choose_swipes_needed()
             self.maybe_react_to_current_post()
+
+            if not self.maybe_reverse_scroll():
+                break
 
             for _ in range(swipes_needed):
                 if self.stop_event.is_set() or time.time() >= deadline:
