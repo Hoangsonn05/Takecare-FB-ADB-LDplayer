@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from queue import Queue
 from typing import Callable, Dict, Iterable, Optional
 import copy
+import random
 import threading
 import time
 
@@ -74,12 +75,12 @@ class AutomationScheduler:
         self.event_queue.put(AutomationEvent(index=-1, type="scheduler", status="SCHEDULER", message=message))
 
     def _start_staggered(self, indices: list[int], runtime_config: RuntimeConfig) -> None:
-        stagger = max(0, int(runtime_config.worker_start_stagger_sec))
         for offset, index in enumerate(indices):
             self._emit_scheduler(f"[Scheduler] Starting LD-{index}")
             self._submit_worker(index, runtime_config)
-            if offset < len(indices) - 1 and stagger > 0:
-                self._emit_scheduler(f"[Scheduler] Waiting {stagger}s before next worker")
+            if offset < len(indices) - 1:
+                stagger = random.uniform(5.0, 7.0)
+                self._emit_scheduler(f"[Scheduler] Waiting {stagger:.1f}s before next worker")
                 time.sleep(stagger)
 
     def _submit_worker(self, index: int, runtime_config: RuntimeConfig) -> None:
@@ -132,6 +133,21 @@ class AutomationScheduler:
 
     def stop_all(self) -> None:
         self.stop(list(self.jobs.keys()))
+
+    def set_max_workers(self, max_workers: int) -> None:
+        """Doi so luong worker toi da. An toan khi co worker dang chay."""
+        max_workers = max(1, int(max_workers))
+        self.settings.max_concurrent_devices = max_workers
+        with self.lock:
+            has_active = any(not job.future.done() for job in self.jobs.values()) or bool(self.pending_indices)
+        if has_active:
+            return
+        old = self.executor
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            old.shutdown(wait=False, cancel_futures=False)
+        except TypeError:
+            old.shutdown(wait=False)
 
     def start_indices(self, indices: list[int], config: RuntimeConfig) -> None:
         """Alias ro rang cho start(). Dung boi GUI Start Selected."""

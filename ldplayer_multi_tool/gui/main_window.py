@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -121,6 +122,21 @@ class MainWindow(QMainWindow):
             "angry": QCheckBox("Angry"),
         }
 
+        # Thoi gian xem bai (delay sau moi lan cuon xuong)
+        self.view_delay_min_spin = QDoubleSpinBox()
+        self.view_delay_min_spin.setRange(0.0, 300.0)
+        self.view_delay_min_spin.setSingleStep(0.5)
+        self.view_delay_min_spin.setDecimals(1)
+
+        self.view_delay_max_spin = QDoubleSpinBox()
+        self.view_delay_max_spin.setRange(0.0, 300.0)
+        self.view_delay_max_spin.setSingleStep(0.5)
+        self.view_delay_max_spin.setDecimals(1)
+
+        # Ti le cuon nguoc
+        self.reverse_scroll_percent_spin = QSpinBox()
+        self.reverse_scroll_percent_spin.setRange(0, 100)
+
         run_form.addWidget(QLabel("So post"), 0, 0)
         run_form.addWidget(self.max_posts_spin, 0, 1)
         run_form.addWidget(QLabel("So phut chay"), 0, 2)
@@ -129,10 +145,16 @@ class MainWindow(QMainWindow):
         run_form.addWidget(self.max_reactions_spin, 1, 1)
         run_form.addWidget(QLabel("Ti le tha cam xuc (%)"), 1, 2)
         run_form.addWidget(self.reaction_probability_spin, 1, 3)
+        run_form.addWidget(QLabel("Xem bai min (s)"), 0, 4)
+        run_form.addWidget(self.view_delay_min_spin, 0, 5)
+        run_form.addWidget(QLabel("Xem bai max (s)"), 1, 4)
+        run_form.addWidget(self.view_delay_max_spin, 1, 5)
+        run_form.addWidget(QLabel("Ti le cuon nguoc (%)"), 0, 6)
+        run_form.addWidget(self.reverse_scroll_percent_spin, 0, 7)
         run_form.addWidget(self.reaction_enabled_check, 2, 0)
         for col, reaction in enumerate(ALLOWED_REACTIONS, start=1):
             run_form.addWidget(self.reaction_checks[reaction], 2, col)
-        run_form.addWidget(self.save_config_btn, 3, 5)
+        run_form.addWidget(self.save_config_btn, 3, 7)
         layout.addWidget(run_box)
 
         button_row = QHBoxLayout()
@@ -200,6 +222,9 @@ class MainWindow(QMainWindow):
         self.max_reactions_spin.setValue(cfg.max_reactions)
         self.reaction_probability_spin.setValue(cfg.reaction_probability_percent)
         self.reaction_enabled_check.setChecked(cfg.reaction_enabled)
+        self.view_delay_min_spin.setValue(cfg.delay_min_sec)
+        self.view_delay_max_spin.setValue(cfg.delay_max_sec)
+        self.reverse_scroll_percent_spin.setValue(cfg.reverse_scroll_percent)
         selected = set(cfg.selected_reactions)
         for reaction, checkbox in self.reaction_checks.items():
             checkbox.setChecked(reaction in selected)
@@ -225,7 +250,7 @@ class MainWindow(QMainWindow):
         self.settings.validate()
         manager = self._make_manager()
         self.scheduler.settings = self.settings
-        self.scheduler.executor._max_workers = self.settings.max_concurrent_devices
+        self.scheduler.set_max_workers(self.settings.max_concurrent_devices)
         if not manager.tools_exist():
             self._append_log(manager.path_status_message())
 
@@ -234,6 +259,8 @@ class MainWindow(QMainWindow):
         selected = [name for name, checkbox in self.reaction_checks.items() if checkbox.isChecked()]
         if self.reaction_enabled_check.isChecked() and not selected:
             raise ValueError("Select at least one reaction")
+        if self.view_delay_min_spin.value() > self.view_delay_max_spin.value():
+            raise ValueError("Thoi gian xem bai min phai <= max")
         cfg = RuntimeConfig.from_dict({
             **base.__dict__,
             "max_posts": self.max_posts_spin.value(),
@@ -242,6 +269,9 @@ class MainWindow(QMainWindow):
             "reaction_probability_percent": self.reaction_probability_spin.value(),
             "reaction_enabled": self.reaction_enabled_check.isChecked(),
             "selected_reactions": selected,
+            "delay_min_sec": self.view_delay_min_spin.value(),
+            "delay_max_sec": self.view_delay_max_spin.value(),
+            "reverse_scroll_percent": self.reverse_scroll_percent_spin.value(),
         })
         cfg.validate()
         return cfg

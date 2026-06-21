@@ -48,9 +48,10 @@ class RuntimeConfig:
     up_y2_max: int = 800
     duration_min_ms: int = 350
     duration_max_ms: int = 450
+    # Delay sau moi lan cuon xuong, dung nhu thoi gian xem bai viet.
     delay_min_sec: float = 2.0
     delay_max_sec: float = 3.0
-    reverse_scroll_percent: int = 12
+    reverse_scroll_percent: int = 25
     swipes_per_post_min: int = 1
     swipes_per_post_max: int = 2
     occasional_extra_swipe_percent: int = 8
@@ -93,6 +94,10 @@ class RuntimeConfig:
             raise ValueError("swipes_per_post_max must be >= swipes_per_post_min")
         if not 0 <= self.occasional_extra_swipe_percent <= 100:
             raise ValueError("occasional_extra_swipe_percent must be 0..100")
+        if self.delay_min_sec < 0:
+            raise ValueError("delay_min_sec must be >= 0")
+        if self.delay_max_sec < 0:
+            raise ValueError("delay_max_sec must be >= 0")
         for low, high, name in [
             (self.x_min, self.x_max, "x"),
             (self.down_y1_min, self.down_y1_max, "down_y1"),

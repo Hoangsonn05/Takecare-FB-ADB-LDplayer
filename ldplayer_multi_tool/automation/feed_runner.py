@@ -99,7 +99,7 @@ class FeedRunner:
         return True
 
     def log_action_debug(self, message: str) -> None:
-        """Chỉ log khi verbose_action_log=True, không spam panel mặc định."""
+        """Chi log khi verbose_action_log=True, khong spam panel mac dinh."""
         if getattr(self.config, "verbose_action_log", False):
             self.emit("action", message, status="RUNNING")
 
@@ -109,9 +109,9 @@ class FeedRunner:
         if not result.ok:
             return self._handle_result(False, f"Swipe failed: {msg}; {result.brief()}")
         self.stats.swipe_count += 1
-        # Không log từng swipe vào panel — chỉ cập nhật counter và debug nếu verbose
+        # Khong log tung swipe vao panel — chi cap nhat counter va debug neu verbose
         self.log_action_debug(msg)
-        # Emit event tối giản để cập nhật counter trên bảng mà không spam log
+        # Emit event toi gian de cap nhat counter tren bang ma khong spam log
         self.emit_cb(
             AutomationEvent(
                 index=self.index,
@@ -127,6 +127,7 @@ class FeedRunner:
                 error_count=self.stats.error_count,
             )
         )
+        # delay_sec la thoi gian xem bai sau khi cuon xuong
         self._sleep_interruptible(command.delay_sec if delay_override is None else delay_override)
         return True
 
@@ -144,22 +145,28 @@ class FeedRunner:
             n += 1
         return max(1, min(n, 3))
 
+    def _do_reverse_scroll(self) -> bool:
+        """Cuon len nhe roi cuon xuong hoan tra. Goi sau view delay cua down swipe chinh."""
+        if self.stop_event.is_set():
+            return False
+        self.log_action_debug("Reverse scroll triggered")
+        # Cuon len nhe — delay override ngan, khong dung thoi gian xem bai
+        if not self._perform_swipe(self.random_swipe_up(), delay_override=uniform(0.5, 1.2)):
+            return False
+        if self.stop_event.is_set():
+            return False
+        # Cuon xuong hoan tra — delay override ngan
+        if not self._perform_swipe(self.random_swipe_down(), delay_override=uniform(0.8, 1.8)):
+            return False
+        return not self.stop_event.is_set()
+
     def maybe_reverse_scroll(self) -> bool:
+        """Xac suat thuc hien reverse scroll theo config. Tra True neu khong can dung."""
         if self.config.reverse_scroll_percent <= 0:
             return True
         if randint(1, 100) > self.config.reverse_scroll_percent:
             return True
-        if self.stop_event.is_set():
-            return False
-
-        self.emit("action", "Reverse scroll", status="RUNNING")
-        if not self._perform_swipe(self.random_swipe_up(), delay_override=uniform(0.6, 1.4)):
-            return False
-        if self.stop_event.is_set():
-            return False
-        if not self._perform_swipe(self.random_swipe_down(), delay_override=uniform(0.8, 1.8)):
-            return False
-        return not self.stop_event.is_set()
+        return self._do_reverse_scroll()
 
     def _screenshot_path(self) -> Path:
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -444,9 +451,9 @@ class FeedRunner:
                 continue
 
             self.stats.posts_processed += 1
-            # Không log từng post vào panel — chỉ debug nếu verbose
+            # Khong log tung post vao panel — chi debug neu verbose
             self.log_action_debug(f"Post started: {self.stats.posts_processed}")
-            # Emit counter-only event để cập nhật cột Posts
+            # Emit counter-only event de cap nhat cot Posts
             self.emit_cb(
                 AutomationEvent(
                     index=self.index,
@@ -465,13 +472,22 @@ class FeedRunner:
             swipes_needed = self.choose_swipes_needed()
             self.maybe_react_to_current_post()
 
-            if not self.maybe_reverse_scroll():
-                break
-
+            # Cuon xuong bai chinh — delay_sec trong SwipeCommand la thoi gian xem bai
+            swipe_ok = True
             for _ in range(swipes_needed):
                 if self.stop_event.is_set() or time.time() >= deadline:
+                    swipe_ok = False
                     break
                 if not self._perform_swipe(self.random_swipe_down()):
+                    swipe_ok = False
+                    break
+
+            if not swipe_ok:
+                break
+
+            # Sau cuon xuong va da sleep view delay, xac suat cuon nguoc nhe
+            if not self.stop_event.is_set() and time.time() < deadline:
+                if not self.maybe_reverse_scroll():
                     break
 
         if self.stop_event.is_set():
