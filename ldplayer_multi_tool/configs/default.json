@@ -2,7 +2,7 @@
   "ld_base": "D:\\MMO\\QuanlyLDPlayer\\LD9Mod-32bit\\LD9Mod",
   "adb_port_base": 5555,
   "package_name": "com.facebook.katana",
-  "max_concurrent_devices": 1,
+  "max_concurrent_devices": 2,
   "screenshots_dir": "screenshots",
   "logs_dir": "logs",
   "database_path": "data/runs.sqlite3",
@@ -14,7 +14,13 @@
     "max_reactions": 0,
     "reaction_probability_percent": 100,
     "selected_reactions": [
-      "like"
+      "like",
+      "love",
+      "thuongthuong",
+      "haha",
+      "wow",
+      "sad",
+      "angry"
     ],
     "template_dir": "resources/templates",
     "confidence_like": 0.6,
@@ -47,6 +53,8 @@
     "max_consecutive_errors": 5,
     "ld_boot_timeout_sec": 90,
     "ld_settle_sec": 10,
+    "restart_ld_on_adb_offline": true,
+    "adb_recovery_restarts": 1,
     "facebook_open_timeout_sec": 45,
     "facebook_settle_sec": 10,
     "worker_start_stagger_sec": 5,
@@ -59,6 +67,7 @@
     "reel_reaction_probability_percent": 100,
     "reel_tab_template": "reel_tab.png",
     "home_tab_template": "home_tab.png",
-    "nav_template_threshold": 0.7
+    "nav_template_threshold": 0.7,
+    "auto_quit_ld_after_run": false
   }
 }

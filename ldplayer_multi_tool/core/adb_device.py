@@ -30,17 +30,39 @@ class ADBDevice:
         text = f"{result.stdout}\n{result.stderr}".lower()
         return result.ok and ("connected" in text or "already connected" in text or not text.strip())
 
+    def disconnect(self) -> bool:
+        result = self.runner.run([self.adb_path, "disconnect", self.serial], timeout=10)
+        return result.ok
+
+    def devices_list(self) -> str:
+        result = self.runner.run([self.adb_path, "devices", "-l"], timeout=10)
+        return result.stdout if result.ok else result.stderr
+
     def get_state(self) -> str:
         result = self.runner.run(self._adb("get-state"), timeout=5)
         return result.stdout.strip() if result.ok else "offline"
 
     def wait_for_device(self, timeout_sec: float = 90.0, poll_sec: float = 2.0) -> bool:
         end = time.time() + timeout_sec
+        offline_hits = 0
+
         self.connect()
         while time.time() < end:
-            if self.get_state() == "device":
+            state = self.get_state()
+            if state == "device":
                 return True
-            self.connect()
+
+            if state == "offline":
+                offline_hits += 1
+                if offline_hits in {2, 4, 6}:
+                    self.disconnect()
+                    time.sleep(1.0)
+                    self.connect()
+                else:
+                    self.connect()
+            else:
+                self.connect()
+
             time.sleep(poll_sec)
         return False
 

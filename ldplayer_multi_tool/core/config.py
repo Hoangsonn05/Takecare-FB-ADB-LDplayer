@@ -64,6 +64,8 @@ class RuntimeConfig:
     max_consecutive_errors: int = 5
     ld_boot_timeout_sec: int = 90
     ld_settle_sec: int = 10
+    restart_ld_on_adb_offline: bool = True
+    adb_recovery_restarts: int = 1
     facebook_open_timeout_sec: int = 45
     facebook_settle_sec: int = 10
     worker_start_stagger_sec: int = 5
@@ -80,6 +82,7 @@ class RuntimeConfig:
     reel_tab_template: str = "reel_tab.png"
     home_tab_template: str = "home_tab.png"
     nav_template_threshold: float = 0.70
+    auto_quit_ld_after_run: bool = False
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "RuntimeConfig":
@@ -137,6 +140,7 @@ class RuntimeConfig:
         for value, name in [
             (self.ld_boot_timeout_sec, "ld_boot_timeout_sec"),
             (self.ld_settle_sec, "ld_settle_sec"),
+            (self.adb_recovery_restarts, "adb_recovery_restarts"),
             (self.facebook_open_timeout_sec, "facebook_open_timeout_sec"),
             (self.facebook_settle_sec, "facebook_settle_sec"),
             (self.worker_start_stagger_sec, "worker_start_stagger_sec"),

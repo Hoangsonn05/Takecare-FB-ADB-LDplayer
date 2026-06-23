@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from queue import Empty, Queue
 import time
@@ -209,15 +210,15 @@ class MainWindow(QMainWindow):
         self.start_btn = QPushButton("Start Selected")
         self.pause_btn = QPushButton("Pause")
         self.resume_btn = QPushButton("Resume")
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Stop Selected")
         for btn in [
             self.scan_btn,
             self.clear_btn,
             self.connect_btn,
             self.start_btn,
+            self.stop_btn,
             self.pause_btn,
             self.resume_btn,
-            self.stop_btn,
         ]:
             button_row.addWidget(btn)
         layout.addLayout(button_row)
@@ -228,7 +229,7 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.start_selected)
         self.pause_btn.clicked.connect(lambda: self.scheduler.pause(self.selected_indices()))
         self.resume_btn.clicked.connect(lambda: self.scheduler.resume(self.selected_indices()))
-        self.stop_btn.clicked.connect(lambda: self.scheduler.stop_all())
+        self.stop_btn.clicked.connect(self.stop_selected)
 
         self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels([
@@ -580,6 +581,11 @@ class MainWindow(QMainWindow):
             if row is not None:
                 self._set_cell(row, self.COL_ADB, state)
             self._append_log(f"[LD-{index}] ADB {serial}: {'connected' if connected else 'connect failed'}; state={state}")
+            if state == "offline":
+                self._append_log(
+                    f"[LD-{index}] ADB offline: instance is reachable but ADB daemon is not ready. "
+                    "Try restarting this LD profile or use Start to trigger recovery."
+                )
 
     def launch_selected(self) -> None:
         self._apply_ui_to_settings()
@@ -614,11 +620,21 @@ class MainWindow(QMainWindow):
             if not indices:
                 QMessageBox.information(self, "Start", "No LD selected")
                 return
-            self.scheduler.start(indices, self.settings.runtime_config)
+            cfg = copy.deepcopy(self.settings.runtime_config)
+            cfg.auto_quit_ld_after_run = True
+            self.scheduler.start(indices, cfg)
             self._append_log("Start requested")
         except Exception as exc:
             self._append_log(f"Start error: {exc}")
             QMessageBox.critical(self, "Start error", str(exc))
+
+    def stop_selected(self) -> None:
+        indices = self.selected_indices()
+        if not indices:
+            QMessageBox.information(self, "Stop", "No LD selected")
+            return
+        self.scheduler.stop_selected(indices)
+        self._append_log(f"Stop requested for LD ID(s): {', '.join(map(str, indices))}")
 
     def _drain_events(self) -> None:
         try:

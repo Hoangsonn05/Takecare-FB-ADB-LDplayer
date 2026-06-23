@@ -337,6 +337,56 @@ class FeedRunner:
         self._handle_result(False, f"LDPlayer launch failed: args={result.args}; output={result.brief()}")
         return False
 
+    def _adb_not_ready_details(self) -> str:
+        adb_list = self.device.devices_list().strip()[:500]
+        running_state = self.ld.is_instance_running_by_ldconsole(self.index)
+        return (
+            f"ADB device not ready after LD launch: {self.device.serial}; "
+            f"ldconsole_running={running_state}; "
+            f"adb_devices={adb_list}"
+        )
+
+    def _restart_ld_after_adb_not_ready(self) -> bool | None:
+        restarts = max(0, int(getattr(self.config, "adb_recovery_restarts", 0)))
+        if not getattr(self.config, "restart_ld_on_adb_offline", True) or restarts <= 0:
+            return None
+
+        self.emit(
+            "status",
+            f"ADB not ready for {self.device.serial}; restarting LDPlayer index {self.index} once",
+            level="WARN",
+            status="CONNECTING_ADB",
+        )
+        self.ld.quit(self.index)
+        self._sleep_interruptible(5.0)
+        if self.stop_event.is_set():
+            return False
+
+        launch = self.ld.launch(self.index)
+        if not launch.ok:
+            self._handle_result(False, f"LDPlayer relaunch failed after ADB offline: args={launch.args}; output={launch.brief()}")
+            return False
+
+        self._sleep_interruptible(8.0)
+        if self.stop_event.is_set():
+            return False
+
+        if self.device.wait_for_device(timeout_sec=self.config.ld_boot_timeout_sec, poll_sec=2):
+            self.emit("status", "ADB connected after LDPlayer restart", status="CONNECTING_ADB")
+            return True
+
+        adb_list = self.device.devices_list().strip()[:500]
+        running_state = self.ld.is_instance_running_by_ldconsole(self.index)
+        self._handle_result(
+            False,
+            (
+                f"ADB still offline after LDPlayer restart: {self.device.serial}; "
+                f"ldconsole_running={running_state}; "
+                f"adb_devices={adb_list}"
+            ),
+        )
+        return False
+
     def bootstrap(self) -> bool:
         """
         Prepare LDPlayer and Facebook before running automation.
@@ -361,9 +411,14 @@ class FeedRunner:
         self.emit("status", f"ADB serial: {self.device.serial}", status="CONNECTING_ADB")
         self.emit("status", "Waiting for ADB device", status="CONNECTING_ADB")
         if not self.device.wait_for_device(timeout_sec=self.config.ld_boot_timeout_sec, poll_sec=2):
-            self._handle_result(False, f"ADB device not ready after LD launch: {self.device.serial}")
-            return False
-        self.emit("status", "ADB connected", status="CONNECTING_ADB")
+            recovered = self._restart_ld_after_adb_not_ready()
+            if recovered is None:
+                self._handle_result(False, self._adb_not_ready_details())
+                return False
+            if recovered is False:
+                return False
+        else:
+            self.emit("status", "ADB connected", status="CONNECTING_ADB")
 
         self.emit("status", "Waiting for Android boot completed", status="WAITING_BOOT")
         if not self.device.wait_for_boot_completed(timeout_sec=self.config.ld_boot_timeout_sec, poll_sec=2):
@@ -740,14 +795,31 @@ class FeedRunner:
         else:
             self.emit("status", "Done", status="DONE")
 
+    def _quit_ldplayer_after_done(self) -> None:
+        if not getattr(self.config, "auto_quit_ld_after_run", False):
+            return
+        if self.stats.status != "DONE" or self.stop_event.is_set():
+            return
+        self.emit("status", "Completed config; closing LDPlayer", status="DONE")
+        result = self.ld.quit(self.index)
+        if result.ok:
+            self.emit("status", "LDPlayer quit command sent after completed config", status="DONE")
+            return
+        self.emit(
+            "status",
+            f"LDPlayer auto quit failed after completed config: args={result.args}; output={result.brief()}",
+            level="WARN",
+            status="DONE",
+        )
 
     def run(self) -> RunnerStats:
-        self.stats = RunnerStats(started_at=time.time(), status="STARTING")
+        self.stats = RunnerStats(status="STARTING")
         self.emit("status", "Worker started", status="STARTING")
         if not self.bootstrap():
             self.emit("status", "Bootstrap failed", level="ERROR", status="ERROR")
             return self.stats
 
+        self.stats.started_at = time.time()
         self.emit("status", "Runtime config started", status="RUNNING")
 
         run_nf = self.config.run_newfeed
@@ -778,4 +850,5 @@ class FeedRunner:
             self.run_newfeed_loop()
 
         self._emit_final_status()
+        self._quit_ldplayer_after_done()
         return self.stats
