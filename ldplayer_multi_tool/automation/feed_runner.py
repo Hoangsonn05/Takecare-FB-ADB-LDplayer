@@ -281,11 +281,68 @@ class FeedRunner:
         self.stats.status = "ERROR"
         return False
 
+    def _ensure_ldplayer_started(self) -> bool:
+        """
+        Kiem tra va khoi dong LDPlayer instance theo index bang ldconsole.
+        Khong yeu cau ADB truoc khi quyet dinh launch.
+        Return True neu da chay hoac da gui lenh launch thanh cong.
+        """
+        self.emit("status", f"Checking LDPlayer instance {self.index}", status="LAUNCHING")
+
+        running = self.ld.is_instance_running_by_ldconsole(self.index)
+
+        if running is True:
+            self.emit("status", "LDPlayer already running by ldconsole", status="LAUNCHING")
+            return True
+
+        if running is False:
+            self.emit("status", f"LDPlayer index {self.index} is not running; launching", status="LAUNCHING")
+        else:
+            self.emit(
+                "status",
+                f"LDPlayer running state unknown for index {self.index}; launching anyway",
+                level="WARN",
+                status="LAUNCHING",
+            )
+
+        result = self.ld.launch(self.index)
+
+        if result.ok:
+            self.emit("status", "LDPlayer launch command sent", status="LAUNCHING")
+            self._sleep_interruptible(4.0)
+            return True
+
+        if self.ld.looks_like_usage_output(result):
+            self._handle_result(
+                False,
+                (
+                    "LDPlayer launch command returned Usage/help output. "
+                    "This usually means ldconsole arguments are wrong. "
+                    f"Args={result.args}; output={result.brief()}"
+                ),
+            )
+            return False
+
+        running_after_fail = self.ld.is_instance_running_by_ldconsole(self.index)
+        if running_after_fail is True:
+            self.emit(
+                "status",
+                f"LDPlayer launch returned non-zero but instance is running by ldconsole: {result.brief()}",
+                level="WARN",
+                status="LAUNCHING",
+            )
+            self._sleep_interruptible(3.0)
+            return True
+
+        self._handle_result(False, f"LDPlayer launch failed: args={result.args}; output={result.brief()}")
+        return False
+
     def bootstrap(self) -> bool:
         """
         Prepare LDPlayer and Facebook before running automation.
         Return True only when executable paths, LDPlayer, ADB, Android boot,
         and Facebook foreground checks have succeeded.
+        Flow: check paths -> check/launch LD by ldconsole -> wait ADB -> boot -> app
         """
         self.emit("status", "Checking LDPlayer executable paths", status="CHECKING_PATHS")
         if self.ld.ld_base != self.ld.raw_ld_base:
@@ -296,24 +353,15 @@ class FeedRunner:
             self.emit("status", "Set LDPlayer base to the folder containing ldconsole.exe, ld.exe and adb.exe", level="ERROR", status="ERROR")
             return False
 
+        # 1. Launch/check LD bang ldconsole truoc, khong yeu cau ADB
+        if not self._ensure_ldplayer_started():
+            return False
+
+        # 2. Sau khi da quyet dinh launch/running, moi connect ADB
         self.emit("status", f"ADB serial: {self.device.serial}", status="CONNECTING_ADB")
-        self.device.connect()
-        adb_ready = self.device.get_state() == "device"
-        running = self.ld.is_instance_running(self.index)
-
-        if running or adb_ready:
-            self.emit("status", "LDPlayer already running", status="CONNECTING_ADB")
-        else:
-            self.emit("status", f"Launching LDPlayer index {self.index}", status="LAUNCHING")
-            result = self.ld.launch(self.index)
-            if not result.ok:
-                self._handle_result(False, f"LDPlayer launch failed: {result.brief()}")
-                return False
-            self.emit("status", "LDPlayer launch command sent", status="LAUNCHING")
-
         self.emit("status", "Waiting for ADB device", status="CONNECTING_ADB")
         if not self.device.wait_for_device(timeout_sec=self.config.ld_boot_timeout_sec, poll_sec=2):
-            self._handle_result(False, f"ADB device not ready: {self.device.serial}")
+            self._handle_result(False, f"ADB device not ready after LD launch: {self.device.serial}")
             return False
         self.emit("status", "ADB connected", status="CONNECTING_ADB")
 

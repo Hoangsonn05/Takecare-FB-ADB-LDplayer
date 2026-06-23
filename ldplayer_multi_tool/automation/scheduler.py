@@ -68,6 +68,9 @@ class AutomationScheduler:
             self.pending_indices.update(to_start)
         if not to_start:
             return
+        self._emit_scheduler(
+            f"[Scheduler] Requested {len(to_start)} worker(s), max concurrent={self.settings.max_concurrent_devices}"
+        )
         thread = threading.Thread(target=self._start_staggered, args=(to_start, config_snapshot), daemon=True)
         thread.start()
 
@@ -76,7 +79,7 @@ class AutomationScheduler:
 
     def _start_staggered(self, indices: list[int], runtime_config: RuntimeConfig) -> None:
         for offset, index in enumerate(indices):
-            self._emit_scheduler(f"[Scheduler] Starting LD-{index}")
+            self._emit_scheduler(f"[Scheduler] Submitting LD-{index}")
             self._submit_worker(index, runtime_config)
             if offset < len(indices) - 1:
                 stagger = random.uniform(5.0, 7.0)
@@ -134,20 +137,35 @@ class AutomationScheduler:
     def stop_all(self) -> None:
         self.stop(list(self.jobs.keys()))
 
+    def _cleanup_finished_jobs_locked(self) -> None:
+        """Xoa job da xong khoi self.jobs. Goi ben trong lock."""
+        finished = [idx for idx, job in self.jobs.items() if job.future.done()]
+        for idx in finished:
+            self.jobs.pop(idx, None)
+
     def set_max_workers(self, max_workers: int) -> None:
         """Doi so luong worker toi da. An toan khi co worker dang chay."""
         max_workers = max(1, int(max_workers))
         self.settings.max_concurrent_devices = max_workers
+
         with self.lock:
-            has_active = any(not job.future.done() for job in self.jobs.values()) or bool(self.pending_indices)
-        if has_active:
+            self._cleanup_finished_jobs_locked()
+            has_active_jobs = any(not job.future.done() for job in self.jobs.values())
+            has_pending = bool(self.pending_indices) or self.pending_starts > 0
+
+        if has_active_jobs or has_pending:
+            self._emit_scheduler(
+                f"[Scheduler] Max concurrent will apply next idle session: {max_workers}"
+            )
             return
+
         old = self.executor
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         try:
             old.shutdown(wait=False, cancel_futures=False)
         except TypeError:
             old.shutdown(wait=False)
+        self._emit_scheduler(f"[Scheduler] Max concurrent set to {max_workers}")
 
     def start_indices(self, indices: list[int], config: RuntimeConfig) -> None:
         """Alias ro rang cho start(). Dung boi GUI Start Selected."""

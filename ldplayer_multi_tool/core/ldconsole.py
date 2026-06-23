@@ -183,6 +183,18 @@ class LDConsoleManager:
             )
         return instances
 
+    def _looks_like_usage_output(self, result: CommandResult) -> bool:
+        text = f"{result.stdout}\n{result.stderr}".lower()
+        return (
+            "usage:" in text
+            or "commands :" in text
+            or "dnconsole <command>" in text
+            or "command line management interface" in text
+        )
+
+    def looks_like_usage_output(self, result: CommandResult) -> bool:
+        return self._looks_like_usage_output(result)
+
     def _parse_list_output(self, text: str) -> list[LDInstance]:
         """Parse `ldconsole list` as a fallback.
 
@@ -357,12 +369,12 @@ class LDConsoleManager:
     def list_instances(self) -> list[LDInstance]:
         instances: list[LDInstance] = []
         if self.ldconsole_path.exists():
-            result2 = self.runner.run([self.ldconsole_path, "list2"], timeout=20)
-            if result2.ok:
+            result2 = self.runner.run([self.ldconsole_path, "list2"], timeout=20, cwd=self.ld_base)
+            if result2.ok and not self._looks_like_usage_output(result2):
                 instances = self._merge_instances(instances, self._parse_list2_output(result2.stdout))
 
-            result1 = self.runner.run([self.ldconsole_path, "list"], timeout=20)
-            if result1.ok:
+            result1 = self.runner.run([self.ldconsole_path, "list"], timeout=20, cwd=self.ld_base)
+            if result1.ok and not self._looks_like_usage_output(result1):
                 instances = self._merge_instances(instances, self._parse_list_output(result1.stdout))
 
         # Always run filesystem fallback: it can reveal stopped LDMultiplayer
@@ -385,25 +397,79 @@ class LDConsoleManager:
         result = self.runner.run([self.adb_path, "-s", serial, "get-state"], timeout=5)
         return result.ok and result.stdout.strip() == "device"
 
+    def is_instance_running_by_ldconsole(self, index: int) -> bool | None:
+        """
+        Kiem tra LD instance co dang chay khong, chi dua vao ldconsole/list2.
+        Return:
+        - True neu ldconsole/list2 xac nhan dang chay
+        - False neu ldconsole/list2 xac nhan dang tat
+        - None neu khong xac dinh duoc
+        Khong fallback ADB trong ham nay.
+        """
+        result = self.runner.run(
+            [self.ldconsole_path, "isrunning", "--index", str(int(index))],
+            timeout=15,
+            cwd=self.ld_base,
+        )
+        text = f"{result.stdout}\n{result.stderr}".strip().lower()
+
+        if result.ok and not self._looks_like_usage_output(result):
+            if text in {"1", "true", "yes", "running"}:
+                return True
+            if text in {"0", "false", "no", "stopped"}:
+                return False
+            if "not running" in text or "stopped" in text:
+                return False
+            if "running" in text:
+                return True
+
+        inst = self.get_instance(index)
+        if inst is None:
+            return None
+        if inst.is_running is None:
+            return None
+        return bool(inst.is_running)
+
     def launch(self, index: int) -> CommandResult:
-        return self.runner.run([self.ldconsole_path, "launch", f"--index={index}"], timeout=40)
+        return self.runner.run(
+            [self.ldconsole_path, "launch", "--index", str(int(index))],
+            timeout=40,
+            cwd=self.ld_base,
+        )
 
     def launch_if_needed(self, index: int) -> tuple[bool, CommandResult | None, str]:
-        running = self.is_instance_running(index)
+        running = self.is_instance_running_by_ldconsole(index)
         if running is True:
             return True, None, "LDPlayer instance is already running"
         result = self.launch(index)
         if result.ok:
             return True, result, "LDPlayer launch command sent"
+        if self._looks_like_usage_output(result):
+            return False, result, "LDPlayer launch command returned Usage/help output"
+        running_after_fail = self.is_instance_running_by_ldconsole(index)
+        if running_after_fail is True:
+            return True, result, "LDPlayer launch returned non-zero but instance is running by ldconsole"
         return False, result, "LDPlayer launch returned non-zero"
 
     def quit(self, index: int) -> CommandResult:
-        return self.runner.run([self.ldconsole_path, "quit", f"--index={index}"], timeout=20)
+        return self.runner.run(
+            [self.ldconsole_path, "quit", "--index", str(int(index))],
+            timeout=20,
+            cwd=self.ld_base,
+        )
 
     def run_app(self, index: int, package_name: str) -> CommandResult:
         if not package_name:
             return CommandResult(["runapp"], 1, "", "package_name is empty")
         return self.runner.run(
-            [self.ldconsole_path, "runapp", f"--index={index}", f"--packagename={package_name}"],
+            [
+                self.ldconsole_path,
+                "runapp",
+                "--index",
+                str(int(index)),
+                "--packagename",
+                package_name,
+            ],
             timeout=25,
+            cwd=self.ld_base,
         )
