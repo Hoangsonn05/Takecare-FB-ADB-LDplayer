@@ -29,16 +29,19 @@ class NavMatcher:
         self.threshold = float(threshold)
         self._cache: dict[str, object] = {}
 
-    def _load_template(self, filename: str):
-        if filename in self._cache:
-            return self._cache[filename]
-        path = self._resolve_template_file(filename)
+    def _load_template(self, filename: str | Path):
+        key = str(filename)
+        if key in self._cache:
+            return self._cache[key]
+        path = Path(filename)
+        if not path.is_absolute():
+            path = self._resolve_template_file(str(filename))
         if not path.exists():
             raise FileNotFoundError(f"Missing nav template: {path}")
         img = imread_unicode(path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             raise ValueError(f"Cannot read nav template: {path}")
-        self._cache[filename] = img
+        self._cache[key] = img
         return img
 
     def _resolve_template_file(self, filename: str) -> Path:
@@ -51,6 +54,44 @@ class NavMatcher:
                 if candidate.exists():
                     return candidate
         return path
+
+    def _candidate_template_paths(self, filename: str) -> list[Path]:
+        paths: list[Path] = []
+        primary = self._resolve_template_file(filename)
+        if primary.exists():
+            paths.append(primary)
+
+        stem = Path(filename).stem
+        if stem == "thongbao":
+            for ext in (".png", ".jpg", ".jpeg"):
+                candidate = self.template_dir / f"thongbaokhioreel{ext}"
+                if candidate.exists() and candidate not in paths:
+                    paths.append(candidate)
+        return paths
+
+    @staticmethod
+    def _edge_image(gray):
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        return cv2.Canny(blurred, 50, 150)
+
+    @staticmethod
+    def _best_template_match(roi, template) -> tuple[float, tuple[int, int] | None, tuple[int, int] | None]:
+        best_score: float = -1.0
+        best_loc = None
+        best_size = None
+
+        for scale in (0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30):
+            resized = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            th, tw = resized.shape[:2]
+            if th >= roi.shape[0] or tw >= roi.shape[1]:
+                continue
+            result = cv2.matchTemplate(roi, resized, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if float(max_val) > best_score:
+                best_score = float(max_val)
+                best_loc = max_loc
+                best_size = (tw, th)
+        return best_score, best_loc, best_size
 
     def find_top_nav_icon(
         self,
@@ -74,25 +115,40 @@ class NavMatcher:
         roi_box = (roi_x1, roi_y1, roi_x2, roi_y2)
         roi = screen[roi_y1:roi_y2, roi_x1:roi_x2]
 
-        template = self._load_template(filename)
-
         best_score: float = -1.0
         best_loc = None
         best_size = None
+        best_template_name = filename
 
-        for scale in (0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30):
-            resized = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-            th, tw = resized.shape[:2]
-            if th >= roi.shape[0] or tw >= roi.shape[1]:
-                continue
-            result = cv2.matchTemplate(roi, resized, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if float(max_val) > best_score:
-                best_score = float(max_val)
-                best_loc = max_loc
-                best_size = (tw, th)
+        templates = self._candidate_template_paths(filename)
+        if not templates:
+            templates = [self._resolve_template_file(filename)]
 
-        if best_loc is None or best_size is None or best_score < self.threshold:
+        for template_path in templates:
+            template = self._load_template(template_path)
+            score, loc, size = self._best_template_match(roi, template)
+            if score > best_score:
+                best_score = score
+                best_loc = loc
+                best_size = size
+                best_template_name = template_path.name
+
+        # Fallback theo hinh dang/canh de chiu duoc nen sang/toi cua Reel.
+        edge_threshold = max(0.62, self.threshold - 0.10)
+        if best_score < self.threshold:
+            roi_edges = self._edge_image(roi)
+            for template_path in templates:
+                template = self._load_template(template_path)
+                template_edges = self._edge_image(template)
+                score, loc, size = self._best_template_match(roi_edges, template_edges)
+                if score > best_score:
+                    best_score = score
+                    best_loc = loc
+                    best_size = size
+                    best_template_name = f"{template_path.name}:edge"
+
+        threshold = edge_threshold if ":edge" in best_template_name else self.threshold
+        if best_loc is None or best_size is None or best_score < threshold:
             return None, best_score
 
         tw, th = best_size
@@ -103,6 +159,6 @@ class NavMatcher:
             x=cx,
             y=cy,
             confidence=best_score,
-            template_name=filename,
+            template_name=best_template_name,
             roi=roi_box,
         ), best_score

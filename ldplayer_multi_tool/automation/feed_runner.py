@@ -697,7 +697,7 @@ class FeedRunner:
         self._sleep_interruptible(uniform(0.8, 1.2))
         return not self.stop_event.is_set()
 
-    def _tap_nav_icon(self, template_filename: str, tab_label: str, reveal: bool = True) -> bool:
+    def _tap_nav_icon(self, template_filename: str, tab_label: str, reveal: bool = True, fail_quietly: bool = False) -> bool:
         """reveal -> screenshot -> find template -> tap. Dung chung cho Reel va Home."""
         if reveal and not self.reveal_top_nav():
             return False
@@ -707,12 +707,22 @@ class FeedRunner:
         try:
             match, best = self.nav_matcher.find_top_nav_icon(screen, template_filename)
         except Exception as exc:
+            if fail_quietly:
+                self.emit("status", f"Find {tab_label} tab direct try failed: {exc}", level="WARN", status=self.stats.status)
+                return False
             self._handle_result(False, f"Find {tab_label} tab failed: {exc}")
             return False
-        self.emit("status", f"{tab_label} tab best confidence={best:.3f} threshold={self.config.nav_template_threshold:.3f}", status=self.stats.status)
         if match is None:
+            self.emit("status", f"{tab_label} tab best confidence={best:.3f} threshold={self.config.nav_template_threshold:.3f}", status=self.stats.status)
+            if fail_quietly:
+                return False
             self._handle_result(False, f"{tab_label} tab not found. best={best:.3f}, threshold={self.config.nav_template_threshold:.3f}")
             return False
+        self.emit(
+            "status",
+            f"{tab_label} tab best confidence={best:.3f} threshold={self.config.nav_template_threshold:.3f} template={match.template_name}",
+            status=self.stats.status,
+        )
         tap = self.device.tap(match.x, match.y)
         if not tap.ok:
             self._handle_result(False, f"Tap {tab_label} tab failed: {tap.brief()}")
@@ -736,14 +746,34 @@ class FeedRunner:
             self.current_tab = "newfeed"
         return ok
 
-    def enter_notifications_tab(self) -> bool:
+    def enter_notifications_tab(self, from_reel: bool = False) -> bool:
         self.emit("status", "Entering Notifications tab", status="OPENING_NOTIFICATIONS")
-        reveal = self.current_tab != "reel"
-        ok = self._tap_nav_icon(
-            self.config.notification_tab_template,
-            "Notifications",
-            reveal=reveal,
+        reveal = not from_reel and self.current_tab != "reel"
+        self.emit(
+            "status",
+            f"Notifications nav reveal={reveal} current_tab={self.current_tab} from_reel={from_reel}",
+            status="OPENING_NOTIFICATIONS",
         )
+        if reveal:
+            ok = self._tap_nav_icon(
+                self.config.notification_tab_template,
+                "Notifications",
+                reveal=False,
+                fail_quietly=True,
+            )
+            if not ok:
+                self.emit("status", "Notifications tab direct try failed; revealing top nav", status="OPENING_NOTIFICATIONS")
+                ok = self._tap_nav_icon(
+                    self.config.notification_tab_template,
+                    "Notifications",
+                    reveal=True,
+                )
+        else:
+            ok = self._tap_nav_icon(
+                self.config.notification_tab_template,
+                "Notifications",
+                reveal=False,
+            )
         if not ok:
             return False
         self._sleep_interruptible(self.config.notification_load_sec)
@@ -882,11 +912,15 @@ class FeedRunner:
                 self.emit("error", f"Tap notification failed: {tap.brief()}", level="ERROR")
                 continue
 
-            self._sleep_interruptible(uniform(1.5, 2.5))
+            open_delay = uniform(4.0, 6.0)
+            self.emit("status", f"Waiting notification content load {open_delay:.1f}s", status="RUNNING")
+            self._sleep_interruptible(open_delay)
             read_delay = uniform(self.config.notification_read_min_sec, self.config.notification_read_max_sec)
             cmd = random_down_swipe(self.config)
-            if not self._perform_swipe(cmd, delay_override=read_delay):
+            if not self._perform_swipe(cmd, delay_override=uniform(0.8, 1.4)):
                 return
+            self.emit("status", f"Reading notification content {read_delay:.1f}s", status="RUNNING")
+            self._sleep_interruptible(read_delay)
 
             back = self.device.back()
             if not back.ok:
@@ -957,6 +991,7 @@ class FeedRunner:
         self.stats.started_at = time.time()
         self.emit("status", "Runtime config started", status="RUNNING")
 
+        previous_action: str | None = None
         for action in self._build_script_actions():
             if self.stop_event.is_set():
                 break
@@ -967,17 +1002,23 @@ class FeedRunner:
                         break
                 self.run_newfeed_loop()
                 self.current_tab = "newfeed"
+                previous_action = "newfeed"
             elif action == "reel":
                 if self.current_tab != "reel":
                     if not self.enter_reel_tab():
                         break
                 self.run_reel_loop()
                 self.current_tab = "reel"
+                previous_action = "reel"
             elif action == "notifications":
-                if not self.enter_notifications_tab():
+                from_reel = previous_action == "reel" or self.current_tab == "reel"
+                if from_reel:
+                    self.current_tab = "reel"
+                if not self.enter_notifications_tab(from_reel=from_reel):
                     break
                 self.run_notifications_loop()
                 self.current_tab = "notifications"
+                previous_action = "notifications"
 
         self._emit_final_status()
         self._quit_ldplayer_after_done()
