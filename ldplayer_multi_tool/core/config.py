@@ -73,8 +73,15 @@ class RuntimeConfig:
     # --- Kich ban chay ---
     run_newfeed: bool = True
     run_reel: bool = False
+    run_notifications: bool = False
     script_order: str = "newfeed_then_reel"  # "newfeed_then_reel" | "reel_then_newfeed" | "random"
     reel_run_minutes: int = 0
+    notification_tab_template: str = "thongbao.jpg"
+    notification_count: int = 0
+    notification_read_min_sec: float = 4.0
+    notification_read_max_sec: float = 8.0
+    notification_max_search_swipes: int = 3
+    notification_load_sec: float = 3.0
     # --- Cam xuc Reel (rieng biet voi Newfeed) ---
     reel_reaction_enabled: bool = False
     reel_reaction_probability_percent: int = 10
@@ -161,12 +168,37 @@ class RuntimeConfig:
                 if not path.exists():
                     raise ValueError(f"Missing reaction template for {reaction}: {path}")
         # --- Validate Reel fields ---
-        if self.script_order not in {"newfeed_then_reel", "reel_then_newfeed", "random"}:
-            raise ValueError("script_order must be newfeed_then_reel, reel_then_newfeed or random")
-        if not self.run_newfeed and not self.run_reel:
-            raise ValueError("At least one action must be enabled: run_newfeed or run_reel")
+        allowed_script_orders = {
+            "newfeed_then_reel",
+            "reel_then_newfeed",
+            "newfeed_then_notifications",
+            "notifications_then_newfeed",
+            "reel_then_notifications",
+            "notifications_then_reel",
+            "newfeed_then_reel_then_notifications",
+            "newfeed_then_notifications_then_reel",
+            "reel_then_newfeed_then_notifications",
+            "reel_then_notifications_then_newfeed",
+            "notifications_then_newfeed_then_reel",
+            "notifications_then_reel_then_newfeed",
+            "random",
+        }
+        if self.script_order not in allowed_script_orders:
+            raise ValueError("script_order contains an unsupported action order")
+        if not self.run_newfeed and not self.run_reel and not self.run_notifications:
+            raise ValueError("At least one action must be enabled")
         if self.reel_run_minutes < 0:
             raise ValueError("reel_run_minutes must be >= 0")
+        if self.notification_count < 0:
+            raise ValueError("notification_count must be >= 0")
+        if self.notification_read_min_sec < 0 or self.notification_read_max_sec < 0:
+            raise ValueError("notification read delay must be >= 0")
+        if self.notification_read_min_sec > self.notification_read_max_sec:
+            raise ValueError("notification_read_min_sec must be <= notification_read_max_sec")
+        if self.notification_max_search_swipes < 0:
+            raise ValueError("notification_max_search_swipes must be >= 0")
+        if self.notification_load_sec < 0:
+            raise ValueError("notification_load_sec must be >= 0")
         if not 0.0 <= self.nav_template_threshold <= 1.0:
             raise ValueError("nav_template_threshold must be 0.0..1.0")
         if not 0 <= self.reel_reaction_probability_percent <= 100:
@@ -185,6 +217,11 @@ class RuntimeConfig:
                     path = template_dir / REACTION_TEMPLATE_FILES[reaction]
                     if not path.exists():
                         raise ValueError(f"Missing reaction template for {reaction}: {path}")
+        if self.run_notifications:
+            template_dir = app_path(self.template_dir)
+            notification_path = self._resolve_template_file(template_dir, self.notification_tab_template)
+            if notification_path is None:
+                raise ValueError(f"Missing notification tab template: {self.notification_tab_template}")
 
     @staticmethod
     def _resolve_template_file(template_dir: Path, filename: str) -> Path | None:

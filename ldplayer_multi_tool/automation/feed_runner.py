@@ -61,6 +61,7 @@ class FeedRunner:
         self.reel_matcher: TemplateMatcher | None = None
         self.screen_width: int | None = None
         self.screen_height: int | None = None
+        self.current_tab: str = "unknown"
         self.nav_matcher = NavMatcher(
             self._resolve_template_dir(runtime_config.template_dir),
             threshold=runtime_config.nav_template_threshold,
@@ -202,6 +203,17 @@ class FeedRunner:
         if not ok or not path.exists():
             self.stats.error_count += 1
             self.emit("error", f"Nav screenshot failed: {path}", level="ERROR")
+            return None
+        self.stats.screenshot_count += 1
+        return path
+
+    def _capture_notification_screen(self, tag: str) -> Path | None:
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        path = self.screenshot_dir / f"notification_ld_{self.index}_{tag}_{int(time.time() * 1000)}.png"
+        ok = self.device.screenshot(path)
+        if not ok or not path.exists():
+            self.stats.error_count += 1
+            self.emit("error", f"Notification screenshot failed: {path}", level="ERROR")
             return None
         self.stats.screenshot_count += 1
         return path
@@ -438,6 +450,7 @@ class FeedRunner:
         if self.config.launch_app and self.settings.package_name:
             if not self._open_facebook():
                 return False
+            self.current_tab = "newfeed"
         else:
             self.emit("status", "App launch skipped")
 
@@ -684,9 +697,9 @@ class FeedRunner:
         self._sleep_interruptible(uniform(0.8, 1.2))
         return not self.stop_event.is_set()
 
-    def _tap_nav_icon(self, template_filename: str, tab_label: str) -> bool:
+    def _tap_nav_icon(self, template_filename: str, tab_label: str, reveal: bool = True) -> bool:
         """reveal -> screenshot -> find template -> tap. Dung chung cho Reel va Home."""
-        if not self.reveal_top_nav():
+        if reveal and not self.reveal_top_nav():
             return False
         screen = self._capture_nav_screen(tab_label)
         if screen is None:
@@ -712,6 +725,7 @@ class FeedRunner:
         ok = self._tap_nav_icon(self.config.reel_tab_template, "Reel")
         if ok:
             self.emit("status", "Reel ready", status="RUNNING")
+            self.current_tab = "reel"
         return ok
 
     def enter_home_tab(self) -> bool:
@@ -719,7 +733,23 @@ class FeedRunner:
         ok = self._tap_nav_icon(self.config.home_tab_template, "Home")
         if ok:
             self.emit("status", "Home ready", status="RUNNING")
+            self.current_tab = "newfeed"
         return ok
+
+    def enter_notifications_tab(self) -> bool:
+        self.emit("status", "Entering Notifications tab", status="OPENING_NOTIFICATIONS")
+        reveal = self.current_tab != "reel"
+        ok = self._tap_nav_icon(
+            self.config.notification_tab_template,
+            "Notifications",
+            reveal=reveal,
+        )
+        if not ok:
+            return False
+        self._sleep_interruptible(self.config.notification_load_sec)
+        self.emit("status", "Notifications ready", status="RUNNING")
+        self.current_tab = "notifications"
+        return True
 
     def run_newfeed_loop(self) -> None:
         """Loop Newfeed goc — giu nguyen logic reaction, reverse scroll, view delay."""
@@ -787,6 +817,111 @@ class FeedRunner:
             if not self._perform_swipe(cmd):
                 break
 
+    def run_notifications_loop(self) -> None:
+        from core.notification_detector import NotificationDetector
+
+        detector = NotificationDetector()
+        target = self.config.notification_count or 10
+        read_count = 0
+        self.emit("status", f"Notification loop started, target={target}", status="RUNNING")
+
+        while read_count < target and not self.stop_event.is_set():
+            while self.pause_event.is_set() and not self.stop_event.is_set():
+                time.sleep(0.5)
+
+            rows = []
+            unread_rows = []
+            max_search = int(self.config.notification_max_search_swipes)
+            for search_i in range(max_search + 1):
+                screen = self._capture_notification_screen(f"list_{read_count}_{search_i}")
+                if screen is None:
+                    return
+
+                rows = detector.detect_rows(screen)
+                unread_rows = [row for row in rows if row.unread]
+                self.emit(
+                    "status",
+                    f"Notifications detected: total={len(rows)}, unread={len(unread_rows)}, search={search_i}",
+                    status="RUNNING",
+                )
+
+                if unread_rows:
+                    break
+
+                if search_i < max_search:
+                    self.emit(
+                        "status",
+                        f"Searching more notifications: swipe {search_i + 1}/{max_search}",
+                        status="RUNNING",
+                    )
+                    cmd = random_down_swipe(self.config)
+                    if not self._perform_swipe(cmd, delay_override=1.0):
+                        return
+
+            candidates = unread_rows if unread_rows else rows
+            if not candidates:
+                self.emit("status", "No notification rows detected", level="WARN", status="RUNNING")
+                break
+            if not unread_rows:
+                self.emit(
+                    "status",
+                    f"No unread notifications after {max_search} swipes; selecting random read notification",
+                    status="RUNNING",
+                )
+
+            row = choice(candidates)
+            self.emit(
+                "status",
+                f"Open notification at ({row.x},{row.y}), unread={row.unread}",
+                status="RUNNING",
+            )
+
+            tap = self.device.tap(row.x, row.y)
+            if not tap.ok:
+                self.stats.error_count += 1
+                self.emit("error", f"Tap notification failed: {tap.brief()}", level="ERROR")
+                continue
+
+            self._sleep_interruptible(uniform(1.5, 2.5))
+            read_delay = uniform(self.config.notification_read_min_sec, self.config.notification_read_max_sec)
+            cmd = random_down_swipe(self.config)
+            if not self._perform_swipe(cmd, delay_override=read_delay):
+                return
+
+            back = self.device.back()
+            if not back.ok:
+                self.stats.error_count += 1
+                self.emit("error", f"Back from notification failed: {back.brief()}", level="ERROR")
+                return
+
+            self._sleep_interruptible(uniform(1.0, 1.8))
+            read_count += 1
+            self.emit("status", f"Notification read done: {read_count}/{target}", status="RUNNING")
+
+    def _build_script_actions(self) -> list[str]:
+        enabled: list[str] = []
+        if self.config.run_newfeed:
+            enabled.append("newfeed")
+        if self.config.run_reel:
+            enabled.append("reel")
+        if self.config.run_notifications:
+            enabled.append("notifications")
+
+        if not enabled:
+            return []
+        if self.config.script_order == "random":
+            actions = list(enabled)
+            _random.shuffle(actions)
+            self.emit("status", f"Random script order selected: {' -> '.join(actions)}", status="RUNNING")
+            return actions
+
+        order = self.config.script_order.split("_then_")
+        actions = [action for action in order if action in enabled]
+        for action in enabled:
+            if action not in actions:
+                actions.append(action)
+        return actions
+
     def _emit_final_status(self) -> None:
         if self.stop_event.is_set():
             self.emit("status", "Stopped", status="STOPPED")
@@ -822,32 +957,27 @@ class FeedRunner:
         self.stats.started_at = time.time()
         self.emit("status", "Runtime config started", status="RUNNING")
 
-        run_nf = self.config.run_newfeed
-        run_rl = self.config.run_reel
+        for action in self._build_script_actions():
+            if self.stop_event.is_set():
+                break
 
-        # Giai quyet thu tu kich ban, ke ca random
-        order = self.config.script_order
-        if order == "random" and run_nf and run_rl:
-            order = _random.choice(["newfeed_then_reel", "reel_then_newfeed"])
-            self.emit("status", f"Random script order selected: {order}", status="RUNNING")
-
-        if run_nf and run_rl:
-            if order == "newfeed_then_reel":
+            if action == "newfeed":
+                if self.current_tab in {"reel", "notifications"}:
+                    if not self.enter_home_tab():
+                        break
                 self.run_newfeed_loop()
-                if not self.stop_event.is_set():
-                    if self.enter_reel_tab() and not self.stop_event.is_set():
-                        self.run_reel_loop()
-            else:  # reel_then_newfeed
-                if self.enter_reel_tab() and not self.stop_event.is_set():
-                    self.run_reel_loop()
-                if not self.stop_event.is_set():
-                    if self.enter_home_tab() and not self.stop_event.is_set():
-                        self.run_newfeed_loop()
-        elif run_rl:
-            if self.enter_reel_tab() and not self.stop_event.is_set():
+                self.current_tab = "newfeed"
+            elif action == "reel":
+                if self.current_tab != "reel":
+                    if not self.enter_reel_tab():
+                        break
                 self.run_reel_loop()
-        else:  # chi Newfeed
-            self.run_newfeed_loop()
+                self.current_tab = "reel"
+            elif action == "notifications":
+                if not self.enter_notifications_tab():
+                    break
+                self.run_notifications_loop()
+                self.current_tab = "notifications"
 
         self._emit_final_status()
         self._quit_ldplayer_after_done()

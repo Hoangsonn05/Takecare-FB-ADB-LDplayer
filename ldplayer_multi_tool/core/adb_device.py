@@ -89,6 +89,9 @@ class ADBDevice:
     def long_press(self, x: int, y: int, duration_ms: int = 900) -> CommandResult:
         return self.swipe(x, y, x, y, duration_ms)
 
+    def back(self) -> CommandResult:
+        return self.shell("input", "keyevent", "4", timeout=8)
+
     def open_app_with_monkey(self, package_name: str) -> bool:
         result = self.shell("monkey", "-p", package_name, "-c", "android.intent.category.LAUNCHER", "1", timeout=15)
         return result.ok

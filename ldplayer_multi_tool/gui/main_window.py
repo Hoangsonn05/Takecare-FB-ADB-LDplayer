@@ -154,15 +154,38 @@ class MainWindow(QMainWindow):
         self.run_newfeed_check.setChecked(True)
         self.run_reel_check = QCheckBox("Luot Reel")
         self.run_reel_check.setChecked(False)
+        self.run_notifications_check = QCheckBox("Doc thong bao")
+        self.run_notifications_check.setChecked(False)
 
         self.script_order_combo = QComboBox()
         self.script_order_combo.addItem("Newfeed -> Reel", "newfeed_then_reel")
         self.script_order_combo.addItem("Reel -> Newfeed", "reel_then_newfeed")
-        self.script_order_combo.addItem("Random (moi luong tu chon)", "random")
+        self.script_order_combo.addItem("Newfeed -> Thong bao", "newfeed_then_notifications")
+        self.script_order_combo.addItem("Thong bao -> Newfeed", "notifications_then_newfeed")
+        self.script_order_combo.addItem("Reel -> Thong bao", "reel_then_notifications")
+        self.script_order_combo.addItem("Thong bao -> Reel", "notifications_then_reel")
+        self.script_order_combo.addItem("Newfeed -> Reel -> Thong bao", "newfeed_then_reel_then_notifications")
+        self.script_order_combo.addItem("Newfeed -> Thong bao -> Reel", "newfeed_then_notifications_then_reel")
+        self.script_order_combo.addItem("Reel -> Newfeed -> Thong bao", "reel_then_newfeed_then_notifications")
+        self.script_order_combo.addItem("Reel -> Thong bao -> Newfeed", "reel_then_notifications_then_newfeed")
+        self.script_order_combo.addItem("Thong bao -> Newfeed -> Reel", "notifications_then_newfeed_then_reel")
+        self.script_order_combo.addItem("Thong bao -> Reel -> Newfeed", "notifications_then_reel_then_newfeed")
+        self.script_order_combo.addItem("Random", "random")
 
         self.reel_minutes_spin = QSpinBox()
         self.reel_minutes_spin.setRange(0, 1440)
         self.reel_minutes_spin.setSpecialValueText("Dung chung")
+
+        self.notification_count_spin = QSpinBox()
+        self.notification_count_spin.setRange(0, 10000)
+        self.notification_read_min_spin = QDoubleSpinBox()
+        self.notification_read_min_spin.setRange(0.0, 300.0)
+        self.notification_read_min_spin.setSingleStep(0.5)
+        self.notification_read_min_spin.setDecimals(1)
+        self.notification_read_max_spin = QDoubleSpinBox()
+        self.notification_read_max_spin.setRange(0.0, 300.0)
+        self.notification_read_max_spin.setSingleStep(0.5)
+        self.notification_read_max_spin.setDecimals(1)
 
         # Cam xuc Reel
         self.reel_reaction_enabled_check = QCheckBox("Bat cam xuc Reel")
@@ -186,13 +209,12 @@ class MainWindow(QMainWindow):
         run_form.addWidget(self.reverse_scroll_percent_spin, 0, 7)
         run_form.addWidget(self.run_newfeed_check, 2, 0)
         run_form.addWidget(self.run_reel_check, 2, 1)
-        run_form.addWidget(QLabel("Thu tu kich ban:"), 2, 2)
-        run_form.addWidget(self.script_order_combo, 2, 3)
-        run_form.addWidget(QLabel("Phut Reel (0=chung)"), 2, 4)
-        run_form.addWidget(self.reel_minutes_spin, 2, 5)
-        run_form.addWidget(self.reel_reaction_enabled_check, 2, 6)
-        run_form.addWidget(QLabel("Ti le cam xuc Reel (%)"), 2, 7)
-        run_form.addWidget(self.reel_reaction_probability_spin, 2, 8)
+        run_form.addWidget(self.run_notifications_check, 2, 2)
+        run_form.addWidget(QLabel("Thu tu kich ban:"), 2, 3)
+        run_form.addWidget(self.script_order_combo, 2, 4, 1, 2)
+        run_form.addWidget(QLabel("Phut Reel (0=chung)"), 2, 6)
+        run_form.addWidget(self.reel_minutes_spin, 2, 7)
+        run_form.addWidget(self.reel_reaction_enabled_check, 2, 8)
         run_form.addWidget(self.reaction_enabled_check, 3, 0)
         for col, reaction in enumerate(ALLOWED_REACTIONS, start=1):
             run_form.addWidget(self.reaction_checks[reaction], 3, col)
@@ -200,7 +222,15 @@ class MainWindow(QMainWindow):
         run_form.addWidget(self.reel_delay_min_spin, 4, 1)
         run_form.addWidget(QLabel("Xem Reel max (s)"), 4, 2)
         run_form.addWidget(self.reel_delay_max_spin, 4, 3)
-        run_form.addWidget(self.save_config_btn, 4, 8)
+        run_form.addWidget(QLabel("Ti le cam xuc Reel (%)"), 4, 4)
+        run_form.addWidget(self.reel_reaction_probability_spin, 4, 5)
+        run_form.addWidget(QLabel("So thong bao doc"), 5, 0)
+        run_form.addWidget(self.notification_count_spin, 5, 1)
+        run_form.addWidget(QLabel("Doc TB min (s)"), 5, 2)
+        run_form.addWidget(self.notification_read_min_spin, 5, 3)
+        run_form.addWidget(QLabel("Doc TB max (s)"), 5, 4)
+        run_form.addWidget(self.notification_read_max_spin, 5, 5)
+        run_form.addWidget(self.save_config_btn, 5, 8)
         layout.addWidget(run_box)
 
         button_row = QHBoxLayout()
@@ -275,10 +305,14 @@ class MainWindow(QMainWindow):
         self.reverse_scroll_percent_spin.setValue(cfg.reverse_scroll_percent)
         self.run_newfeed_check.setChecked(cfg.run_newfeed)
         self.run_reel_check.setChecked(cfg.run_reel)
+        self.run_notifications_check.setChecked(cfg.run_notifications)
         idx = self.script_order_combo.findData(cfg.script_order)
         if idx >= 0:
             self.script_order_combo.setCurrentIndex(idx)
         self.reel_minutes_spin.setValue(cfg.reel_run_minutes)
+        self.notification_count_spin.setValue(cfg.notification_count)
+        self.notification_read_min_spin.setValue(cfg.notification_read_min_sec)
+        self.notification_read_max_spin.setValue(cfg.notification_read_max_sec)
         self.reel_reaction_enabled_check.setChecked(cfg.reel_reaction_enabled)
         self.reel_reaction_probability_spin.setValue(cfg.reel_reaction_probability_percent)
         selected = set(cfg.selected_reactions)
@@ -319,10 +353,13 @@ class MainWindow(QMainWindow):
             raise ValueError("Thoi gian xem bai min phai <= max")
         if self.reel_delay_min_spin.value() > self.reel_delay_max_spin.value():
             raise ValueError("Xem Reel min phai <= max")
+        if self.notification_read_min_spin.value() > self.notification_read_max_spin.value():
+            raise ValueError("Doc TB min phai <= max")
         run_newfeed = self.run_newfeed_check.isChecked()
         run_reel = self.run_reel_check.isChecked()
-        if not run_newfeed and not run_reel:
-            raise ValueError("Chon it nhat mot hanh dong: Luot Newfeed hoac Luot Reel")
+        run_notifications = self.run_notifications_check.isChecked()
+        if not run_newfeed and not run_reel and not run_notifications:
+            raise ValueError("Chon it nhat mot hanh dong")
         script_order = self.script_order_combo.currentData() or "newfeed_then_reel"
         cfg = RuntimeConfig.from_dict({
             **base.__dict__,
@@ -339,8 +376,12 @@ class MainWindow(QMainWindow):
             "reverse_scroll_percent": self.reverse_scroll_percent_spin.value(),
             "run_newfeed": run_newfeed,
             "run_reel": run_reel,
+            "run_notifications": run_notifications,
             "script_order": script_order,
             "reel_run_minutes": self.reel_minutes_spin.value(),
+            "notification_count": self.notification_count_spin.value(),
+            "notification_read_min_sec": self.notification_read_min_spin.value(),
+            "notification_read_max_sec": self.notification_read_max_spin.value(),
             "reel_reaction_enabled": self.reel_reaction_enabled_check.isChecked(),
             "reel_reaction_probability_percent": self.reel_reaction_probability_spin.value(),
         })

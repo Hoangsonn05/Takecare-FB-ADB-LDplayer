@@ -32,7 +32,7 @@ class NavMatcher:
     def _load_template(self, filename: str):
         if filename in self._cache:
             return self._cache[filename]
-        path = self.template_dir / filename
+        path = self._resolve_template_file(filename)
         if not path.exists():
             raise FileNotFoundError(f"Missing nav template: {path}")
         img = imread_unicode(path, cv2.IMREAD_GRAYSCALE)
@@ -40,6 +40,17 @@ class NavMatcher:
             raise ValueError(f"Cannot read nav template: {path}")
         self._cache[filename] = img
         return img
+
+    def _resolve_template_file(self, filename: str) -> Path:
+        path = self.template_dir / filename
+        if path.exists():
+            return path
+        stem = Path(filename).stem
+        for ext in (".png", ".jpg", ".jpeg"):
+            for candidate in (self.template_dir / f"{stem}{ext}", self.template_dir / f"{filename}{ext}"):
+                if candidate.exists():
+                    return candidate
+        return path
 
     def find_top_nav_icon(
         self,
