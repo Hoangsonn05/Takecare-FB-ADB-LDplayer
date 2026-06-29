@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSpinBox,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -104,7 +106,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(settings_box)
 
         run_box = QGroupBox("Run Config")
-        run_form = QGridLayout(run_box)
         self.max_posts_spin = QSpinBox()
         self.max_posts_spin.setRange(0, 10000)
         self.run_minutes_spin = QSpinBox()
@@ -123,40 +124,30 @@ class MainWindow(QMainWindow):
             "sad": QCheckBox("Sad"),
             "angry": QCheckBox("Angry"),
         }
-
-        # Thoi gian xem bai (delay sau moi lan cuon xuong)
         self.view_delay_min_spin = QDoubleSpinBox()
         self.view_delay_min_spin.setRange(0.0, 300.0)
         self.view_delay_min_spin.setSingleStep(0.5)
         self.view_delay_min_spin.setDecimals(1)
-
         self.view_delay_max_spin = QDoubleSpinBox()
         self.view_delay_max_spin.setRange(0.0, 300.0)
         self.view_delay_max_spin.setSingleStep(0.5)
         self.view_delay_max_spin.setDecimals(1)
-
         self.reel_delay_min_spin = QDoubleSpinBox()
         self.reel_delay_min_spin.setRange(0.0, 300.0)
         self.reel_delay_min_spin.setSingleStep(0.5)
         self.reel_delay_min_spin.setDecimals(1)
-
         self.reel_delay_max_spin = QDoubleSpinBox()
         self.reel_delay_max_spin.setRange(0.0, 300.0)
         self.reel_delay_max_spin.setSingleStep(0.5)
         self.reel_delay_max_spin.setDecimals(1)
-
-        # Ti le cuon nguoc
         self.reverse_scroll_percent_spin = QSpinBox()
         self.reverse_scroll_percent_spin.setRange(0, 100)
-
-        # Kich ban chay: Newfeed / Reel
         self.run_newfeed_check = QCheckBox("Luot Newfeed")
         self.run_newfeed_check.setChecked(True)
         self.run_reel_check = QCheckBox("Luot Reel")
         self.run_reel_check.setChecked(False)
         self.run_notifications_check = QCheckBox("Doc thong bao")
         self.run_notifications_check.setChecked(False)
-
         self.script_order_combo = QComboBox()
         self.script_order_combo.addItem("Newfeed -> Reel", "newfeed_then_reel")
         self.script_order_combo.addItem("Reel -> Newfeed", "reel_then_newfeed")
@@ -171,11 +162,9 @@ class MainWindow(QMainWindow):
         self.script_order_combo.addItem("Thong bao -> Newfeed -> Reel", "notifications_then_newfeed_then_reel")
         self.script_order_combo.addItem("Thong bao -> Reel -> Newfeed", "notifications_then_reel_then_newfeed")
         self.script_order_combo.addItem("Random", "random")
-
         self.reel_minutes_spin = QSpinBox()
         self.reel_minutes_spin.setRange(0, 1440)
         self.reel_minutes_spin.setSpecialValueText("Dung chung")
-
         self.notification_count_spin = QSpinBox()
         self.notification_count_spin.setRange(0, 10000)
         self.notification_read_min_spin = QDoubleSpinBox()
@@ -186,51 +175,71 @@ class MainWindow(QMainWindow):
         self.notification_read_max_spin.setRange(0.0, 300.0)
         self.notification_read_max_spin.setSingleStep(0.5)
         self.notification_read_max_spin.setDecimals(1)
-
-        # Cam xuc Reel
         self.reel_reaction_enabled_check = QCheckBox("Bat cam xuc Reel")
         self.reel_reaction_enabled_check.setChecked(False)
         self.reel_reaction_probability_spin = QSpinBox()
         self.reel_reaction_probability_spin.setRange(0, 100)
 
-        run_form.addWidget(QLabel("So post"), 0, 0)
-        run_form.addWidget(self.max_posts_spin, 0, 1)
-        run_form.addWidget(QLabel("So phut chay"), 0, 2)
-        run_form.addWidget(self.run_minutes_spin, 0, 3)
-        run_form.addWidget(QLabel("So cam xuc toi da"), 1, 0)
-        run_form.addWidget(self.max_reactions_spin, 1, 1)
-        run_form.addWidget(QLabel("Ti le tha cam xuc (%)"), 1, 2)
-        run_form.addWidget(self.reaction_probability_spin, 1, 3)
-        run_form.addWidget(QLabel("Xem bai min (s)"), 0, 4)
-        run_form.addWidget(self.view_delay_min_spin, 0, 5)
-        run_form.addWidget(QLabel("Xem bai max (s)"), 1, 4)
-        run_form.addWidget(self.view_delay_max_spin, 1, 5)
-        run_form.addWidget(QLabel("Ti le cuon nguoc (%)"), 0, 6)
-        run_form.addWidget(self.reverse_scroll_percent_spin, 0, 7)
-        run_form.addWidget(self.run_newfeed_check, 2, 0)
-        run_form.addWidget(self.run_reel_check, 2, 1)
-        run_form.addWidget(self.run_notifications_check, 2, 2)
-        run_form.addWidget(QLabel("Thu tu kich ban:"), 2, 3)
-        run_form.addWidget(self.script_order_combo, 2, 4, 1, 2)
-        run_form.addWidget(QLabel("Phut Reel (0=chung)"), 2, 6)
-        run_form.addWidget(self.reel_minutes_spin, 2, 7)
-        run_form.addWidget(self.reel_reaction_enabled_check, 2, 8)
-        run_form.addWidget(self.reaction_enabled_check, 3, 0)
-        for col, reaction in enumerate(ALLOWED_REACTIONS, start=1):
-            run_form.addWidget(self.reaction_checks[reaction], 3, col)
-        run_form.addWidget(QLabel("Xem Reel min (s)"), 4, 0)
-        run_form.addWidget(self.reel_delay_min_spin, 4, 1)
-        run_form.addWidget(QLabel("Xem Reel max (s)"), 4, 2)
-        run_form.addWidget(self.reel_delay_max_spin, 4, 3)
-        run_form.addWidget(QLabel("Ti le cam xuc Reel (%)"), 4, 4)
-        run_form.addWidget(self.reel_reaction_probability_spin, 4, 5)
-        run_form.addWidget(QLabel("So thong bao doc"), 5, 0)
-        run_form.addWidget(self.notification_count_spin, 5, 1)
-        run_form.addWidget(QLabel("Doc TB min (s)"), 5, 2)
-        run_form.addWidget(self.notification_read_min_spin, 5, 3)
-        run_form.addWidget(QLabel("Doc TB max (s)"), 5, 4)
-        run_form.addWidget(self.notification_read_max_spin, 5, 5)
-        run_form.addWidget(self.save_config_btn, 5, 8)
+        # ── Tab: Kich ban ──
+        script_tab = QWidget()
+        script_form = QFormLayout(script_tab)
+        script_checks = QHBoxLayout()
+        script_checks.addWidget(self.run_newfeed_check)
+        script_checks.addWidget(self.run_reel_check)
+        script_checks.addWidget(self.run_notifications_check)
+        script_form.addRow("Hanh dong", script_checks)
+        script_form.addRow("Thu tu kich ban", self.script_order_combo)
+        script_form.addRow("So phut Newfeed", self.run_minutes_spin)
+        script_form.addRow("", self.save_config_btn)
+
+        # ── Tab: Newfeed ──
+        newfeed_tab = QWidget()
+        newfeed_form = QFormLayout(newfeed_tab)
+        newfeed_form.addRow("So post", self.max_posts_spin)
+        newfeed_form.addRow("Xem bai min (s)", self.view_delay_min_spin)
+        newfeed_form.addRow("Xem bai max (s)", self.view_delay_max_spin)
+        newfeed_form.addRow("Ti le cuon nguoc (%)", self.reverse_scroll_percent_spin)
+
+        # ── Tab: Cam xuc ──
+        reaction_tab = QWidget()
+        reaction_form = QFormLayout(reaction_tab)
+        reaction_form.addRow("", self.reaction_enabled_check)
+        reaction_form.addRow("So cam xuc toi da", self.max_reactions_spin)
+        reaction_form.addRow("Ti le tha cam xuc (%)", self.reaction_probability_spin)
+        reaction_row = QHBoxLayout()
+        for reaction in ALLOWED_REACTIONS:
+            reaction_row.addWidget(self.reaction_checks[reaction])
+        reaction_form.addRow("Loai cam xuc", reaction_row)
+
+        # ── Tab: Reel ──
+        reel_tab = QWidget()
+        reel_form = QFormLayout(reel_tab)
+        reel_form.addRow("Phut Reel (0=chung)", self.reel_minutes_spin)
+        reel_form.addRow("Xem Reel min (s)", self.reel_delay_min_spin)
+        reel_form.addRow("Xem Reel max (s)", self.reel_delay_max_spin)
+        reel_form.addRow("", self.reel_reaction_enabled_check)
+        reel_form.addRow("Ti le cam xuc Reel (%)", self.reel_reaction_probability_spin)
+
+        # ── Tab: Thong bao ──
+        notification_tab = QWidget()
+        notification_form = QFormLayout(notification_tab)
+        notification_form.addRow("So thong bao doc", self.notification_count_spin)
+        notification_form.addRow("Doc TB min (s)", self.notification_read_min_spin)
+        notification_form.addRow("Doc TB max (s)", self.notification_read_max_spin)
+
+        # ── Tab: Nang cao (trang) ──
+        advanced_tab = QWidget()
+
+        run_tabs = QTabWidget()
+        run_tabs.addTab(script_tab, "Kich ban")
+        run_tabs.addTab(newfeed_tab, "Newfeed")
+        run_tabs.addTab(reaction_tab, "Cam xuc")
+        run_tabs.addTab(reel_tab, "Reel")
+        run_tabs.addTab(notification_tab, "Thong bao")
+        run_tabs.addTab(advanced_tab, "Nang cao")
+
+        run_box_layout = QVBoxLayout(run_box)
+        run_box_layout.addWidget(run_tabs)
         layout.addWidget(run_box)
 
         button_row = QHBoxLayout()
@@ -318,6 +327,7 @@ class MainWindow(QMainWindow):
         selected = set(cfg.selected_reactions)
         for reaction, checkbox in self.reaction_checks.items():
             checkbox.setChecked(reaction in selected)
+        self._load_recent_ld_ids_to_table()
 
     def _browse_ld_base(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "Select LDPlayer base folder", self.ld_base_edit.text())
@@ -512,6 +522,7 @@ class MainWindow(QMainWindow):
                     last=f"Added by ID; {running_text}",
                     checked=True,
                 )
+            self._set_recent_ld_ids(indices, save=True)
             self._append_log(f"Added LD ID(s): {', '.join(map(str, indices))}")
         except Exception as exc:
             self._append_log(f"LD ID error: {exc}")
@@ -525,6 +536,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "LD IDs", "Nhap it nhat mot index, vi du: 0,1,4")
                 return
             self.add_ids_from_text()
+            self._set_recent_ld_ids(indices, save=True)
             self.scheduler.start(indices, self.settings.runtime_config)
             self._append_log(f"Start requested for LD ID(s): {', '.join(map(str, indices))}")
         except Exception as exc:
@@ -592,11 +604,18 @@ class MainWindow(QMainWindow):
             self.table.removeRow(row)
             
         self._rebuild_row_by_index()
+        remaining = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.COL_INDEX)
+            if item:
+                remaining.append(int(item.text()))
+        self._set_recent_ld_ids(remaining, save=True)
         self._append_log(f"Đã xóa {len(rows_to_delete)} dòng được chọn khỏi danh sách")
 
     def clear_all_devices(self) -> None:
         self.table.setRowCount(0)
         self.row_by_index.clear()
+        self._set_recent_ld_ids([], save=True)
         self._append_log("Đã xóa toàn bộ danh sách thiết bị")
 
     def _rebuild_row_by_index(self) -> None:
@@ -663,6 +682,7 @@ class MainWindow(QMainWindow):
                 return
             cfg = copy.deepcopy(self.settings.runtime_config)
             cfg.auto_quit_ld_after_run = True
+            self._set_recent_ld_ids(indices, save=True)
             self.scheduler.start(indices, cfg)
             self._append_log("Start requested")
         except Exception as exc:
@@ -741,4 +761,67 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.scheduler.stop_all()
+        try:
+            indices = []
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, self.COL_INDEX)
+                if item:
+                    indices.append(int(item.text()))
+            self.settings.recent_ld_ids = list(dict.fromkeys(indices))
+            self._apply_ui_to_settings()
+            save_settings(self.settings, self.config_path)
+        except Exception as exc:
+            self._append_log(f"Close save config error: {exc}")
         event.accept()
+
+    # ──────────────────────────────────────────────
+    # Recent LD IDs helpers
+    # ──────────────────────────────────────────────
+
+    def _set_recent_ld_ids(self, indices: list, save: bool = True) -> None:
+        """Luu danh sach LD IDs gan nhat vao settings va ld_ids_edit."""
+        clean = list(dict.fromkeys(int(i) for i in indices if int(i) >= 0))
+        self.settings.recent_ld_ids = clean
+        self.ld_ids_edit.setText(",".join(map(str, clean)))
+        if save:
+            try:
+                save_settings(self.settings, self.config_path)
+            except Exception as exc:
+                self._append_log(f"Save recent LD IDs failed: {exc}")
+
+    def _load_recent_ld_ids_to_table(self) -> None:
+        """Khoi phuc danh sach LD IDs tu settings vao bang khi mo tool."""
+        ids = list(dict.fromkeys(
+            int(x) for x in getattr(self.settings, "recent_ld_ids", [])
+            if str(x).lstrip("-").isdigit() and int(x) >= 0
+        ))
+        if not ids:
+            return
+        self.ld_ids_edit.setText(",".join(map(str, ids)))
+        manager = self._make_manager()
+        try:
+            known = {inst.index: inst for inst in manager.list_instances()}
+        except Exception:
+            known = {}
+        for index in ids:
+            inst = known.get(index)
+            name = inst.name if inst else f"LD-{index}"
+            if inst and inst.is_running is True:
+                status = "READY"
+                last = "Restored from config; LDPlayer running"
+            elif inst and inst.is_running is False:
+                status = "STOPPED"
+                last = "Restored from config; LDPlayer not running"
+            else:
+                status = "IDLE"
+                last = "Restored from config; not confirmed"
+            self._add_or_update_device(
+                index=index,
+                name=name,
+                serial=manager.serial_for_index(index),
+                adb_state="unknown",
+                initial_status=status,
+                last=last,
+                checked=True,
+            )
+        self._append_log(f"Restored LD ID(s): {', '.join(map(str, ids))}")

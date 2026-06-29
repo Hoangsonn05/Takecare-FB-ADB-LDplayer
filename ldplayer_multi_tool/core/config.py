@@ -253,6 +253,7 @@ class AppSettings:
     logs_dir: str = "logs"
     database_path: str = "data/runs.sqlite3"
     runtime_config: RuntimeConfig = field(default_factory=RuntimeConfig)
+    recent_ld_ids: List[int] = field(default_factory=list)
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "AppSettings":
@@ -260,6 +261,13 @@ class AppSettings:
         if raw_runtime is None:
             old_profiles = data.get("profiles", []) or []
             raw_runtime = old_profiles[0] if old_profiles else {}
+        recent_ld_ids: List[int] = []
+        for x in data.get("recent_ld_ids", []) or []:
+            try:
+                recent_ld_ids.append(int(x))
+            except Exception:
+                pass
+        recent_ld_ids = list(dict.fromkeys(recent_ld_ids))
         settings = AppSettings(
             ld_base=data.get("ld_base", DEFAULT_LD_BASE) or DEFAULT_LD_BASE,
             adb_port_base=int(data.get("adb_port_base", 5555)),
@@ -269,6 +277,7 @@ class AppSettings:
             logs_dir=data.get("logs_dir", "logs"),
             database_path=data.get("database_path", "data/runs.sqlite3"),
             runtime_config=RuntimeConfig.from_dict(raw_runtime or {}),
+            recent_ld_ids=recent_ld_ids,
         )
         settings.validate()
         return settings
@@ -284,6 +293,12 @@ class AppSettings:
         if self.max_concurrent_devices < 1:
             raise ValueError("max_concurrent_devices must be >= 1")
         self.package_name = FACEBOOK_PACKAGE_NAME
+        try:
+            self.recent_ld_ids = list(dict.fromkeys(
+                int(x) for x in self.recent_ld_ids if int(x) >= 0
+            ))
+        except Exception:
+            self.recent_ld_ids = []
         self.runtime_config.validate()
 
     def profile_by_name(self, _name: str) -> RuntimeConfig:
