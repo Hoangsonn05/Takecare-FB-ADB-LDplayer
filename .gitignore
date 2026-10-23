@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+**/data/*.sqlite3
+**/data/*.sqlite3-*
+**/logs/*.log
+**/screenshots/**/*.png
+**/dist/
+**/build/
+**/*.spec

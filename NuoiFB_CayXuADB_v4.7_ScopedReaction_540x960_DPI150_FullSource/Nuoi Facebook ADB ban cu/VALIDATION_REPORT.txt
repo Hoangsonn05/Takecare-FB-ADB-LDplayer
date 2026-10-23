@@ -1,0 +1,51 @@
+FB TOOL REACTION PATCH VALIDATION
+=================================
+Target source: NuoiFB_CayXuADB_v4.6_FixLike_540x960_DPI150_FullSource
+Entry point: app.py
+Device profile: 540 x 960 px, DPI 150
+
+Baseline before v4.7 changes:
+  python -m compileall -q .
+  PASS
+  python -m unittest
+  Ran 57 tests
+  PASS
+
+Final syntax/import checks:
+  python -m compileall -q .
+  PASS
+  python -c "import app, cli; from automation.jobs.runner import JobRunner"
+  PASS
+
+Final automated suites:
+  python -m unittest tests.test_reaction_pipeline -v
+  Ran 19 tests
+  PASS
+  python -m unittest
+  Ran 76 tests
+  PASS
+
+Covered reaction regressions:
+  - Separate horizontal Post and vertical Reel structures.
+  - Multiple Post action rows and comment/summary false positives.
+  - Nearest clickable ancestor and oversized ancestor rejection.
+  - Scope signature stability, identity change and stale re-resolution.
+  - Anchor/panel bounds stay within 540x960 fixtures.
+  - Panel temporal/spatial binding and unrelated panel rejection.
+  - No fixed Feed/Reel icon ordering.
+  - Exact English/Vietnamese label normalization.
+  - Already-Like does not tap again.
+  - Ambiguous pre-state performs no action.
+  - Long press without a new panel performs no option tap.
+  - HAHA requested/WOW active and LOVE requested/LIKE active are mismatches.
+  - Pixel change alone does not confirm a reaction.
+  - Visual confirmation requires two stable exact-reaction frames.
+  - DPI conversion uses configured density.
+  - Failure bundles use named artifacts and sanitized XML.
+
+Runtime limitation:
+  No physical LDPlayer/ADB Facebook session was available. Static, import,
+  fixture and mocked interaction tests pass; live accessibility labels,
+  animations and Facebook version-specific layouts still require device
+  verification. Ambiguous runtime evidence intentionally returns UNKNOWN
+  without tapping or submitting.

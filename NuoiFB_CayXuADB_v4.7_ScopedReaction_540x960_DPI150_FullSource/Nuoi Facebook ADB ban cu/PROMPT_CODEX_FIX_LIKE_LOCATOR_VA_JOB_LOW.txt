@@ -1,0 +1,94 @@
+PROMPT CHO CODEX — SỬA BỘ DÒ NÚT LIKE FACEBOOK VÀ CHU KỲ GET JOB
+
+Làm việc trực tiếp trên mã nguồn mới nhất. Không chỉ lập kế hoạch: phải sửa source,
+thêm regression test, chạy compile/test và báo cáo kết quả. Giữ nguyên kiến trúc
+Auto Job hiện tại; ưu tiên mở rộng các detector, config, service và runner đang có,
+không tạo nhiều module/lớp nhỏ làm dự án phình hoặc phá cấu trúc.
+
+1. BỐI CẢNH LỖI
+
+- Pull job và router đã hoạt động ổn hơn, nhưng bộ dò nút Like còn bỏ sót hoặc chạm
+  nhầm hàng thống kê cảm xúc/bình luận/chia sẻ.
+- Feed có bài dài: hàng thao tác Like/Bình luận/Chia sẻ có thể chưa xuất hiện ở màn
+  hình đầu tiên.
+- Reel dùng cột thao tác dọc bên phải. UI hierarchy thực tế có thể đặt nhãn nút đầu
+  tiên dưới dạng "42 cảm xúc" thay vì "Like" hoặc "Thích".
+- Ảnh DOM và screenshot chỉ là tài liệu tham khảo. Tuyệt đối không hardcode tọa độ,
+  độ phân giải, kích thước hoặc pixel lấy từ ảnh mẫu.
+
+2. QUY TẮC NHẬN DIỆN FEED
+
+- Ưu tiên UI hierarchy/accessibility.
+- Chuẩn hóa Unicode, bỏ dấu và nhận các từ đồng nghĩa Like/Thích/React/Bày tỏ cảm
+  xúc, Bình luận/Comment, Chia sẻ/Share.
+- Chỉ chấp nhận nút Like khi ba action tạo thành một hàng ngang theo thứ tự tương
+  đối: Like ở trái, Bình luận ở giữa, Chia sẻ ở phải.
+- Không coi hàng số liệu như "1.277", "5 bình luận", "6 lượt chia sẻ" là hàng action.
+- Một hàng contour hoặc ba biểu tượng ngang chung chung chỉ được xem là bằng chứng
+  bố cục; không được tự tạo tọa độ tap.
+- Fallback ảnh phải dùng template đa tỉ lệ và vùng tìm kiếm theo tỉ lệ màn hình; kết
+  quả phải vượt đúng confidence, không được nâng confidence giả.
+- Nếu chưa thấy hàng action, vuốt xuống rồi chụp lại và tìm lại; tối đa đúng 3 lần
+  vuốt, dừng sớm khi thấy nút, nhận Stop hoặc màn hình không thay đổi.
+- Cho phép cấu hình số lần vuốt, mặc định 3.
+
+3. QUY TẮC NHẬN DIỆN REEL
+
+- Ưu tiên UI hierarchy. Chấp nhận nhãn có số đếm như "42 cảm xúc", "2 bình luận",
+  "Chia sẻ, 5 lượt chia sẻ".
+- Xác minh ba action tạo thành cột dọc bên phải theo thứ tự: Cảm xúc/Like ở trên,
+  Bình luận ở dưới, Chia sẻ ở dưới nữa. Nếu DOM có hai node cùng nhãn cảm xúc, ưu
+  tiên node action clickable nằm trên node số đếm.
+- Fallback ảnh chỉ tách phần icon ngón tay cái của template Reel; bỏ phần số đếm vì
+  số thay đổi theo job. Tách icon theo dải cạnh/nội dung của chính template, không
+  cắt theo số pixel cố định.
+- Tìm đa tỉ lệ trong vùng tương đối bên phải và xác minh còn các nhóm action lặp lại
+  phía dưới cùng cột. Không được nhận nhầm icon Share thành Like.
+- Nếu đã thấy rõ hàng action ngang của Feed thì Reel detector phải từ chối kết quả.
+
+4. PHÂN LOẠI MÀN HÌNH
+
+- Feed locator, Reel locator và ScreenClassifier phải dùng chung quy tắc ngữ nghĩa
+  action để tránh mỗi nơi hiểu DOM theo một cách khác nhau.
+- UI hierarchy là bằng chứng layout mạnh. CV contour chỉ là bằng chứng yếu và không
+  được lấn át URL/DOM rõ ràng (ví dụ phụ đề Reel tạo nhiều contour ngang).
+- Không execute hoặc tap nếu URL và layout mạnh mâu thuẫn.
+
+5. CHU KỲ GET JOB
+
+- Canonical API phải luôn gửi chính xác tham số query `low_job` với giá trị 0 hoặc 1.
+- Mặc định mọi lần pull dùng `low_job=0` để ưu tiên job điểm cao.
+- Sau N lần liên tiếp `low_job=0` trả về danh sách rỗng (mặc định N=3), lần pull kế
+  tiếp dùng `low_job=1` đúng một lần.
+- Ngay sau lần thử đó phải quay lại `low_job=0`, bất kể lần low-job có job, rỗng hay
+  request lỗi; sau đó lặp lại cùng chu kỳ.
+- API/network error không được tính là một lần "không có job điểm cao".
+- Bộ đếm thuộc từng worker, không dùng chung giữa các LD/tài khoản.
+- Thêm checkbox `low_job_fallback_enabled` và cấu hình
+  `low_job_fallback_after_empty` mặc định 3. Khi checkbox tắt, mọi request luôn là
+  `low_job=0`; khi bật mới chạy chu kỳ fallback.
+- Không giữ song song tên wire `job_low`; service/runner/example/docs phải đi qua
+  một contract `low_job` duy nhất.
+
+6. REGRESSION TEST BẮT BUỘC
+
+- Feed DOM hợp lệ tìm đúng Like; fallback ảnh mẫu cũng tìm được.
+- Ba box/contour ngang giả lập hàng thống kê không tạo tọa độ tap.
+- Bài dài tìm lại sau khi vuốt; hard cap đúng 3 swipe và 4 lần capture.
+- Reel DOM "42 cảm xúc" chọn node trên cùng, trước Bình luận và Chia sẻ.
+- Template Reel đạt ngưỡng runtime và tọa độ nằm ở icon Like, không phải Share.
+- Reel detector từ chối ảnh Feed có hàng action ngang.
+- Classifier URL Reel + DOM số đếm vẫn trả REEL và có layout signal.
+- Chu kỳ runner chính xác: 0,0,0,1,0,0,0,1,0; cấu hình 0 chỉ cho ra mode 0.
+- Test facade/API khẳng định params chính xác là
+  {"fb_id": ..., "server": ..., "low_job": 0 hoặc 1}.
+- Test UI → config cho số swipe và ngưỡng fallback.
+
+7. HOÀN TẤT
+
+- Chạy `python -m compileall .` và `python -m unittest discover -s tests -v`.
+- Không thêm dependency mới.
+- Dọn `__pycache__`, `*.pyc`, build/dist và runtime screenshot/database khỏi source
+  bàn giao; không xóa template, source, test hoặc tài liệu có giá trị.
+- Báo rõ file đã sửa/thêm, nguyên nhân lỗi, kết quả test và phần nào đã/chưa xác nhận
+  live trên LDPlayer. Không để TODO, mock runtime hoặc code cũ comment-out.

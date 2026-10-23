@@ -1,9 +1,0 @@
-__pycache__/
-*.pyc
-.venv/
-data/*.sqlite3
-logs/*.log
-screenshots/*.png
-dist/
-build/
-*.spec
